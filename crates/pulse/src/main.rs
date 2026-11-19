@@ -104,6 +104,7 @@ fn main() -> ExitCode {
             daemon::run(&store, !no_record).map_err(|error| error.to_string())
         }
         Command::Record { seconds, out } => benchmark(
+            &store,
             out.unwrap_or_else(|| store.root().join("benchmark")),
             seconds,
         ),
@@ -296,8 +297,8 @@ fn print_status(store: &Store) {
     );
 }
 
-fn benchmark(dir: std::path::PathBuf, seconds: u64) -> Result<(), String> {
-    let mut recorder = recorder::Recorder::open(dir.clone())?;
+fn benchmark(store: &Store, dir: std::path::PathBuf, seconds: u64) -> Result<(), String> {
+    let mut recorder = recorder::Recorder::open(dir.clone(), &store.root().join("codec"))?;
     let mut idle = presence::IdleTimer::new();
     let projects = std::collections::BTreeSet::from(["benchmark".to_owned()]);
     println!("Recording {seconds}s into {}", dir.display());

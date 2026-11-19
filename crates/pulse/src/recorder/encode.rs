@@ -7,13 +7,15 @@ use std::fs::File;
 use std::io::{self, BufWriter};
 use std::path::Path;
 
+use super::codec;
+
 use mp4::{AvcConfig, Bytes, MediaConfig, Mp4Config, Mp4Sample, Mp4Writer, TrackConfig, TrackType};
+use openh264::Timestamp;
 use openh264::encoder::{
     BitRate, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, RateControlMode,
     UsageType,
 };
 use openh264::formats::{RgbSliceU8, YUVBuffer, YUVSource};
-use openh264::{OpenH264API, Timestamp};
 use pulse_core::activity::Thumbnail;
 
 /// A captured screen in BGRA order, as every OS capture API returns it.
@@ -81,7 +83,8 @@ pub struct VideoEncoder {
 }
 
 impl VideoEncoder {
-    pub fn new() -> io::Result<VideoEncoder> {
+    /// `library` is Cisco's OpenH264 from `codec::ensure`.
+    pub fn new(library: &Path) -> io::Result<VideoEncoder> {
         let config = EncoderConfig::new()
             .usage_type(UsageType::ScreenContentRealTime)
             .max_frame_rate(FrameRate::from_hz(1.0))
@@ -93,8 +96,9 @@ impl VideoEncoder {
             .background_detection(false)
             .skip_frames(false)
             .intra_frame_period(IntraFramePeriod::from_num_frames(300));
-        let encoder = Encoder::with_api_config(OpenH264API::from_source(), config)
-            .map_err(io::Error::other)?;
+        let encoder =
+            Encoder::with_api_config(codec::load(library).map_err(io::Error::other)?, config)
+                .map_err(io::Error::other)?;
         Ok(VideoEncoder { encoder })
     }
 

@@ -4,6 +4,7 @@
 //! before it. Recordings never leave the computer unless you submit them.
 
 pub mod capture;
+pub mod codec;
 pub mod encode;
 
 use std::collections::BTreeSet;
@@ -59,6 +60,7 @@ struct Segment {
 
 pub struct Recorder {
     capture: Capture,
+    codec: PathBuf,
     dir: PathBuf,
     previous: Hash,
     segment: Option<Segment>,
@@ -68,7 +70,9 @@ pub struct Recorder {
 
 impl Recorder {
     /// `Err` says why this system cannot record.
-    pub fn open(dir: PathBuf) -> Result<Recorder, String> {
+    /// `codec_dir` is where Cisco's OpenH264 is kept (downloaded on first use).
+    pub fn open(dir: PathBuf, codec_dir: &Path) -> Result<Recorder, String> {
+        let codec = codec::ensure(codec_dir)?;
         let capture = Capture::open()?;
         let previous = read_chain(&dir)
             .last()
@@ -76,6 +80,7 @@ impl Recorder {
             .unwrap_or(GENESIS);
         Ok(Recorder {
             capture,
+            codec,
             dir,
             previous,
             segment: None,
@@ -113,7 +118,7 @@ impl Recorder {
                 file: format!("{t}.mp4"),
                 size,
                 // a fresh encoder per segment makes every file start with a keyframe and parameter sets
-                encoder: VideoEncoder::new()?,
+                encoder: VideoEncoder::new(&self.codec)?,
                 writer: None,
                 seconds: Vec::new(),
                 projects: BTreeSet::new(),

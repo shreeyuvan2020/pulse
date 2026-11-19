@@ -34,7 +34,7 @@ pub fn run(store: &Store, record: bool) -> io::Result<()> {
         );
     }
     let mut recorder = if record {
-        match Recorder::open(store.root().join("recordings")) {
+        match Recorder::open(store.root().join("recordings"), &store.root().join("codec")) {
             Ok(recorder) => Some(recorder),
             Err(reason) => {
                 eprintln!(

@@ -4,7 +4,7 @@ Passive time tracking for building with AI coding agents, made by Hack Club.
 
 Pulse counts the time **you** spend in the loop with a coding agent: prompting, reading what it did, reviewing, testing and steering. Agent time while you are away is shown separately and never counted. It runs in the background on Windows, macOS and Linux, and is built to stay light on old laptops.
 
-> Status: early development. This repository currently contains the desktop tracker (agent detection, idle timer, local timeline and reports) and the screen recorder (X11 and macOS ScreenCaptureKit capture, OpenH264 software encoding so far). Windows and Wayland capture, hardware encoders, the server (accounts, profiles, real-time dashboard) and submissions come next.
+> Status: early development. This repository currently contains the desktop tracker (agent detection, idle timer, local timeline and reports) and the screen recorder (X11 and macOS ScreenCaptureKit capture, Cisco's OpenH264 software encoding so far). Windows and Wayland capture, hardware encoders, the server (accounts, profiles, real-time dashboard) and submissions come next.
 
 ## How it works
 
@@ -13,6 +13,8 @@ Pulse counts the time **you** spend in the loop with a coding agent: prompting, 
 - **Attribution** credits a second to a project when you are present and its agent session is open, giving the second to the project you touched most recently, so parallel agents never multiply your hours. The rules are in [docs/protocol.md](docs/protocol.md#attribution).
 
 - The **recorder** captures one frame per second while an agent session is open, scaled to fit 1280×720, as 5-minute H.264 MP4 segments. Each segment gets a per-second activity timeline (screen change score and an input yes/no) and a link in a SHA-256 hash chain (`pulse verify` checks it). `pulse daemon --no-record` tracks time without recording, but those hours cannot be verified.
+
+- **Video codec:** Pulse does not build or ship H.264 itself. On first recording it downloads Cisco's prebuilt OpenH264 2.7.0 from `ciscobinary.openh264.org` into its data folder and loads it only if its SHA-256 matches a known Cisco release. OpenH264 Video Codec provided by Cisco Systems, Inc.
 
 Everything stays on your computer as plain JSON Lines files you can read (`pulse events`). Events never contain prompt text, code or file paths.
 

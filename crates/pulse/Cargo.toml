@@ -15,7 +15,9 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 mp4 = "0.14"
-openh264 = "0.9"
+openh264 = { version = "0.9", default-features = false, features = ["libloading"] }
+bzip2 = "0.6"
+ureq = "3"
 ctrlc = { version = "3", features = ["termination"] }
 
 [target.'cfg(windows)'.dependencies]
