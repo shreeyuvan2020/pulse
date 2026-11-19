@@ -4,7 +4,7 @@ Passive time tracking for building with AI coding agents, made by Hack Club.
 
 Pulse counts the time **you** spend in the loop with a coding agent: prompting, reading what it did, reviewing, testing and steering. Agent time while you are away is shown separately and never counted. It runs in the background on Windows, macOS and Linux, and is built to stay light on old laptops.
 
-> Status: early development. This repository currently contains the desktop tracker (agent detection, idle timer, local timeline and reports) and the screen recorder (X11 capture and OpenH264 software encoding so far). Windows, macOS and Wayland capture, hardware encoders, the server (accounts, profiles, real-time dashboard) and submissions come next.
+> Status: early development. This repository currently contains the desktop tracker (agent detection, idle timer, local timeline and reports) and the screen recorder (X11 and macOS ScreenCaptureKit capture, OpenH264 software encoding so far). Windows and Wayland capture, hardware encoders, the server (accounts, profiles, real-time dashboard) and submissions come next.
 
 ## How it works
 
