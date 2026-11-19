@@ -4,6 +4,7 @@ mod install;
 mod paths;
 mod presence;
 mod project;
+mod recorder;
 mod report;
 mod store;
 mod tail;
@@ -31,8 +32,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run in the background, following coding agents and the idle timer.
-    Daemon,
+    /// Run in the background, following coding agents and the idle timer,
+    /// and recording the screen while an agent session is open.
+    Daemon {
+        /// Track time without recording the screen. Hours tracked this way
+        /// cannot be verified.
+        #[arg(long)]
+        no_record: bool,
+    },
+    /// Record the screen for a fixed time and print the overhead, to measure
+    /// how Pulse runs on this computer.
+    Record {
+        #[arg(long, default_value_t = 60)]
+        seconds: u64,
+        /// Where to write the recording (default: a `benchmark` folder in Pulse's data).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// Check that local recordings still match their hash chain.
+    Verify { dir: Option<std::path::PathBuf> },
     /// Called by a coding agent's hooks with the hook payload on stdin.
     #[command(hide = true)]
     Hook { adapter: Adapter },
@@ -82,7 +100,14 @@ fn main() -> ExitCode {
             let _ = run_hook(&store, adapter);
             return ExitCode::SUCCESS;
         }
-        Command::Daemon => daemon::run(&store).map_err(|error| error.to_string()),
+        Command::Daemon { no_record } => {
+            daemon::run(&store, !no_record).map_err(|error| error.to_string())
+        }
+        Command::Record { seconds, out } => benchmark(
+            out.unwrap_or_else(|| store.root().join("benchmark")),
+            seconds,
+        ),
+        Command::Verify { dir } => verify(&dir.unwrap_or_else(|| store.root().join("recordings"))),
         Command::Install {
             adapter: Adapter::ClaudeCode,
             yes,
@@ -269,4 +294,45 @@ fn print_status(store: &Store) {
             "not found"
         }
     );
+}
+
+fn benchmark(dir: std::path::PathBuf, seconds: u64) -> Result<(), String> {
+    let mut recorder = recorder::Recorder::open(dir.clone())?;
+    let mut idle = presence::IdleTimer::new();
+    let projects = std::collections::BTreeSet::from(["benchmark".to_owned()]);
+    println!("Recording {seconds}s into {}", dir.display());
+    let started = std::time::Instant::now();
+    for _ in 0..seconds {
+        let input = idle.idle_seconds() == Some(0);
+        recorder
+            .record(now(), input, &projects)
+            .map_err(|error| error.to_string())?;
+        std::thread::sleep(daemon::until_next_second());
+    }
+    recorder.finish().map_err(|error| error.to_string())?;
+    let wall = started.elapsed().as_secs_f64();
+    let stats = recorder.stats;
+    let megabytes = stats.bytes as f64 / 1e6;
+    println!("Frames: {}", stats.frames);
+    println!(
+        "Video: {megabytes:.2} MB, about {:.0} MB per recorded hour",
+        megabytes * 3600.0 / wall
+    );
+    println!(
+        "Work per frame: {:.1} ms on average ({:.1}% of one CPU core)",
+        stats.busy.as_secs_f64() * 1000.0 / stats.frames.max(1) as f64,
+        stats.busy.as_secs_f64() * 100.0 / wall
+    );
+    Ok(())
+}
+
+fn verify(dir: &Path) -> Result<(), String> {
+    let links = recorder::verify(dir)?;
+    let seconds: i64 = links.iter().map(|link| link.end - link.start).sum();
+    println!(
+        "{} segments, {} of recording, all intact.",
+        links.len(),
+        report::format_duration(seconds)
+    );
+    Ok(())
 }

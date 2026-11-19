@@ -44,6 +44,10 @@ An agent session is **open** while its project is engaged. The screen recorder w
 
 The thresholds are starting values to be tuned against reviewer decisions in a pilot. The rules live in `crates/pulse-core/src/attribution.rs`.
 
+## Recordings
+
+While a session is open, the daemon records into `recordings/` in Pulse's data directory: `<start>.mp4` (5 minutes at 1 fps), `<start>.timeline.json` (`[t, change, input]` per second, with `change` the share of 160×90 brightness cells that changed, per thousand) and one line per segment in `chain.jsonl`. Each link is `sha256("pulse.chain.v1" || previous || start || end || sha256(video) || timeline_hash)`, starting from 32 zero bytes; the exact byte layout is in `crates/pulse-core/src/chain.rs`. A server that receives each link as it is made can later check that a submitted recording existed at that time and was not changed.
+
 ## Writing an adapter
 
 An adapter maps what a harness writes, either hook payloads or transcript lines, to the event kinds above, reading only the fields it needs. Adapters live in `crates/pulse/src/adapters/` with tests built from real payloads. Prefer hooks, which report in real time, and fall back to transcripts, which need no setup.
