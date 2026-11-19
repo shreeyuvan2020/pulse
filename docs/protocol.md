@@ -46,7 +46,7 @@ The thresholds are starting values to be tuned against reviewer decisions in a p
 
 ## Recordings
 
-While a session is open, the daemon records into `recordings/` in Pulse's data directory: `<start>.mp4` (5 minutes at 1 fps), `<start>.timeline.json` (`[t, change, input]` per second, with `change` the share of 160×90 brightness cells that changed, per thousand) and one line per segment in `chain.jsonl`. Each link is `sha256("pulse.chain.v1" || previous || start || end || sha256(video) || timeline_hash)`, starting from 32 zero bytes; the exact byte layout is in `crates/pulse-core/src/chain.rs`. A server that receives each link as it is made can later check that a submitted recording existed at that time and was not changed.
+While a session is open, the daemon records into `recordings/` in Pulse's data directory: `<start>.mp4` (5 minutes at 1 fps), `<start>.timeline.json` (`[t, change, input]` per second, with `change` the share of 160×90 brightness cells that changed, per thousand) and one line per segment in `chain.jsonl`. Each link is `sha256("pulse.chain.v1" || previous || start || end || sha256(video) || timeline_hash)`, starting from 32 zero bytes; the exact byte layout is in `crates/pulse-core/src/chain.rs`. If the folder grows past its limit, the oldest `<start>.mp4` files are deleted but their timeline sidecars and `chain.jsonl` lines are kept, so links still verify and only the video of that stretch is lost. A server that receives each link as it is made can later check that a submitted recording existed at that time and was not changed.
 
 ## Writing an adapter
 

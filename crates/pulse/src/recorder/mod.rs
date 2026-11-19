@@ -6,6 +6,7 @@
 pub mod capture;
 pub mod codec;
 pub mod encode;
+pub mod storage;
 
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
@@ -63,6 +64,7 @@ pub struct Recorder {
     codec: PathBuf,
     dir: PathBuf,
     previous: Hash,
+    low_disk: bool,
     segment: Option<Segment>,
     last_thumbnail: Option<Thumbnail>,
     pub stats: Stats,
@@ -83,6 +85,7 @@ impl Recorder {
             codec,
             dir,
             previous,
+            low_disk: false,
             segment: None,
             last_thumbnail: None,
             stats: Stats::default(),
@@ -99,6 +102,9 @@ impl Recorder {
             .is_some_and(|segment| t - segment.start >= 300)
         {
             self.finish()?;
+        }
+        if self.segment.is_none() && !self.has_room() {
+            return Ok(());
         }
         let Some(frame) = self.capture.grab() else {
             return Ok(());
@@ -164,6 +170,25 @@ impl Recorder {
         Ok(())
     }
 
+    /// Whether there is enough free disk to start a new segment. Says so once
+    /// when recording pauses and once when it resumes.
+    fn has_room(&mut self) -> bool {
+        let _ = fs::create_dir_all(&self.dir);
+        let low = storage::free_bytes(&self.dir).is_some_and(|free| free < storage::MIN_FREE_BYTES);
+        if low != self.low_disk {
+            self.low_disk = low;
+            if low {
+                eprintln!(
+                    "pulse: less than {} free on this disk, recording paused until there is more room",
+                    storage::format_bytes(storage::MIN_FREE_BYTES)
+                );
+            } else {
+                eprintln!("pulse: disk space is back, recording resumed");
+            }
+        }
+        !low
+    }
+
     /// Closes the current segment and adds it to the chain.
     pub fn finish(&mut self) -> io::Result<Option<Link>> {
         let Some(segment) = self.segment.take() else {
@@ -207,6 +232,15 @@ impl Recorder {
             .open(self.dir.join("chain.jsonl"))?
             .write_all(line.as_bytes())?;
         self.previous = link;
+        match storage::prune(&self.dir, storage::cap_bytes()) {
+            Ok((0, _)) => {}
+            Ok((count, freed)) => eprintln!(
+                "pulse: recordings are over the {} limit, deleted the {count} oldest videos ({})",
+                storage::format_bytes(storage::cap_bytes()),
+                storage::format_bytes(freed)
+            ),
+            Err(error) => eprintln!("pulse: cannot delete old recordings: {error}"),
+        }
         Ok(Some(entry))
     }
 }
@@ -227,23 +261,35 @@ fn read_chain(dir: &Path) -> Vec<Link> {
         .unwrap_or_default()
 }
 
+#[derive(Debug)]
+pub struct Verified {
+    pub links: Vec<Link>,
+    /// Segments whose video was deleted to save space. Their timelines and
+    /// links still verify; only the video can no longer be checked or submitted.
+    pub pruned: usize,
+}
+
 /// Checks every segment against the chain: each link follows the one before
 /// it, and the video and timeline files still hash to what was recorded.
 /// Returns the verified links, or the first problem found.
-pub fn verify(dir: &Path) -> Result<Vec<Link>, String> {
+pub fn verify(dir: &Path) -> Result<Verified, String> {
     let links = read_chain(dir);
     let mut previous = GENESIS;
+    let mut pruned = 0;
     for entry in &links {
         let fail = |problem: &str| Err(format!("segment {}: {problem}", entry.file));
         if chain::from_hex(&entry.previous) != Some(previous) {
             return fail("does not follow the segment before it");
         }
-        let Ok(bytes) = fs::read(dir.join(&entry.file)) else {
-            return fail("video file is missing");
+        let Some(video) = chain::from_hex(&entry.video) else {
+            return fail("video hash is unreadable");
         };
-        let video = chain::sha256(&bytes);
-        if chain::to_hex(&video) != entry.video {
-            return fail("video was changed after recording");
+        match fs::read(dir.join(&entry.file)) {
+            Ok(bytes) if chain::sha256(&bytes) != video => {
+                return fail("video was changed after recording");
+            }
+            Ok(_) => {}
+            Err(_) => pruned += 1,
         }
         let Some(sidecar) = fs::read(dir.join(timeline_file(&entry.file)))
             .ok()
@@ -270,5 +316,5 @@ pub fn verify(dir: &Path) -> Result<Vec<Link>, String> {
         }
         previous = link;
     }
-    Ok(links)
+    Ok(Verified { links, pruned })
 }

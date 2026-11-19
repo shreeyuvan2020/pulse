@@ -16,6 +16,8 @@ Pulse counts the time **you** spend in the loop with a coding agent: prompting, 
 
 - **Video codec:** Pulse does not build or ship H.264 itself. On first recording it downloads Cisco's prebuilt OpenH264 2.7.0 from `ciscobinary.openh264.org` into its data folder and loads it only if its SHA-256 matches a known Cisco release. OpenH264 Video Codec provided by Cisco Systems, Inc.
 
+- **Storage:** recordings are about 5-25 MB per recorded hour. Once the recordings folder passes 5 GB (`PULSE_MAX_STORAGE_GB` changes it), the oldest segment videos are deleted first. Each deleted segment keeps its hash-chain line and timeline (a few KB), so `pulse verify` still passes; that stretch just can no longer be submitted. Pulse also stops starting new segments when less than 1 GiB of disk is free, and `pulse status` shows usage and free space.
+
 Everything stays on your computer as plain JSON Lines files you can read (`pulse events`). Events never contain prompt text, code or file paths.
 
 ## Usage

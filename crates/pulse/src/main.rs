@@ -286,6 +286,22 @@ fn print_status(store: &Store) {
         (false, false) => "not found",
     };
     println!("Claude Code: {claude_state}");
+    let recordings = store.root().join("recordings");
+    let usage = recorder::storage::usage(&recordings);
+    let cap = recorder::storage::format_bytes(recorder::storage::cap_bytes());
+    println!(
+        "Recordings: {} in {} segments (limit {cap}, oldest videos are deleted first{})",
+        recorder::storage::format_bytes(usage.bytes),
+        usage.segments,
+        if usage.pruned > 0 {
+            format!("; {} already deleted", usage.pruned)
+        } else {
+            String::new()
+        }
+    );
+    if let Some(free) = recorder::storage::free_bytes(store.root()) {
+        println!("Free disk space: {}", recorder::storage::format_bytes(free));
+    }
     let codex = paths::codex_dir().map(|dir| dir.join("sessions"));
     println!(
         "Codex: {}",
@@ -328,12 +344,22 @@ fn benchmark(store: &Store, dir: std::path::PathBuf, seconds: u64) -> Result<(),
 }
 
 fn verify(dir: &Path) -> Result<(), String> {
-    let links = recorder::verify(dir)?;
-    let seconds: i64 = links.iter().map(|link| link.end - link.start).sum();
+    let verified = recorder::verify(dir)?;
+    let seconds: i64 = verified
+        .links
+        .iter()
+        .map(|link| link.end - link.start)
+        .sum();
     println!(
         "{} segments, {} of recording, all intact.",
-        links.len(),
+        verified.links.len(),
         report::format_duration(seconds)
     );
+    if verified.pruned > 0 {
+        println!(
+            "{} of them had their video deleted to save space; their timelines still verify.",
+            verified.pruned
+        );
+    }
     Ok(())
 }

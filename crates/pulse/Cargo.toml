@@ -14,6 +14,7 @@ serde_json.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
+fs4 = "1"
 mp4 = "0.14"
 openh264 = { version = "0.9", default-features = false, features = ["libloading"] }
 bzip2 = "0.6"
