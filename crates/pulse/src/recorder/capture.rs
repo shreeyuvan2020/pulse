@@ -1,7 +1,9 @@
-//! Grabs the whole screen. X11 and macOS (ScreenCaptureKit) work now;
-//! Windows (Desktop Duplication) and Wayland (xdg-desktop-portal + PipeWire)
-//! come next and will return the same `Frame`.
+//! Grabs the whole screen: X11, macOS (ScreenCaptureKit) and Windows (DXGI
+//! Desktop Duplication). Wayland (xdg-desktop-portal + PipeWire) comes next
+//! and will return the same `Frame`.
 
+#[cfg(windows)]
+mod dxgi;
 #[cfg(target_os = "macos")]
 mod macos;
 
@@ -12,6 +14,8 @@ pub struct Capture {
     x11: x11::Screen,
     #[cfg(target_os = "macos")]
     macos: macos::Screen,
+    #[cfg(windows)]
+    dxgi: dxgi::Screen,
 }
 
 impl Capture {
@@ -25,7 +29,11 @@ impl Capture {
         {
             macos::Screen::open().map(|macos| Capture { macos })
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            dxgi::Screen::open().map(|dxgi| Capture { dxgi })
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             Err("screen recording is not supported on this OS yet".into())
         }
@@ -40,7 +48,11 @@ impl Capture {
         {
             self.macos.grab()
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            self.dxgi.grab()
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             None
         }
