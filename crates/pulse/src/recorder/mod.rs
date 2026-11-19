@@ -65,6 +65,7 @@ pub struct Recorder {
     dir: PathBuf,
     previous: Hash,
     low_disk: bool,
+    warned_protected: bool,
     segment: Option<Segment>,
     last_thumbnail: Option<Thumbnail>,
     pub stats: Stats,
@@ -86,6 +87,7 @@ impl Recorder {
             dir,
             previous,
             low_disk: false,
+            warned_protected: false,
             segment: None,
             last_thumbnail: None,
             stats: Stats::default(),
@@ -232,13 +234,24 @@ impl Recorder {
             .open(self.dir.join("chain.jsonl"))?
             .write_all(line.as_bytes())?;
         self.previous = link;
-        match storage::prune(&self.dir, storage::cap_bytes()) {
-            Ok((0, _)) => {}
-            Ok((count, freed)) => eprintln!(
-                "pulse: recordings are over the {} limit, deleted the {count} oldest videos ({})",
-                storage::format_bytes(storage::cap_bytes()),
-                storage::format_bytes(freed)
-            ),
+        let cap = storage::cap_bytes();
+        match storage::prune(&self.dir, cap, &storage::protected(&self.dir)) {
+            Ok(pruned) => {
+                if pruned.count > 0 {
+                    eprintln!(
+                        "pulse: recordings are over the {} limit, deleted the {} oldest videos ({})",
+                        storage::format_bytes(cap),
+                        pruned.count,
+                        storage::format_bytes(pruned.freed)
+                    );
+                }
+                if pruned.stuck && !self.warned_protected {
+                    eprintln!(
+                        "pulse: recordings are over the limit, but what is left is protected footage, which is never deleted. Submit it or run `pulse unprotect <project>` to free space"
+                    );
+                }
+                self.warned_protected = pruned.stuck;
+            }
             Err(error) => eprintln!("pulse: cannot delete old recordings: {error}"),
         }
         Ok(Some(entry))

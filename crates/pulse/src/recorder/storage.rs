@@ -5,6 +5,7 @@
 //! that stretch can no longer be submitted. Recording pauses when the disk is
 //! nearly full instead of filling it.
 
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io;
@@ -29,48 +30,94 @@ pub fn free_bytes(dir: &Path) -> Option<u64> {
     fs4::available_space(dir).ok()
 }
 
+/// Projects whose footage is never deleted to make room: the ones linked to
+/// a program, until their hours are submitted. Kept in `protected.json` next
+/// to the recordings. A segment is protected if any project in it is.
+pub fn protected(dir: &Path) -> BTreeSet<String> {
+    fs::read_to_string(dir.join("protected.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Protects or unprotects a project. Returns whether anything changed.
+pub fn set_protected(dir: &Path, project: &str, on: bool) -> io::Result<bool> {
+    let mut projects = protected(dir);
+    let changed = if on {
+        projects.insert(project.to_owned())
+    } else {
+        projects.remove(project)
+    };
+    if changed {
+        fs::create_dir_all(dir)?;
+        fs::write(dir.join("protected.json"), serde_json::to_vec(&projects)?)?;
+    }
+    Ok(changed)
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Usage {
     pub bytes: u64,
     pub segments: usize,
     /// Segments whose video was deleted to save space.
     pub pruned: usize,
+    /// Bytes of video that will not be deleted because the project is protected.
+    pub protected_bytes: u64,
 }
 
 pub fn usage(dir: &Path) -> Usage {
+    let protected = protected(dir);
     let mut usage = Usage::default();
     for link in read_chain(dir) {
         usage.segments += 1;
         match fs::metadata(dir.join(&link.file)) {
-            Ok(meta) => usage.bytes += meta.len(),
+            Ok(meta) => {
+                usage.bytes += meta.len();
+                if !link.projects.is_disjoint(&protected) {
+                    usage.protected_bytes += meta.len();
+                }
+            }
             Err(_) => usage.pruned += 1,
         }
     }
     usage
 }
 
-/// Deletes the oldest segment videos until the rest fit in `cap` bytes.
-/// Returns how many videos and bytes were deleted.
-pub fn prune(dir: &Path, cap: u64) -> io::Result<(usize, u64)> {
-    let videos: Vec<(String, u64)> = read_chain(dir)
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Pruned {
+    pub count: usize,
+    pub freed: u64,
+    /// Still over the limit, because everything left is protected.
+    pub stuck: bool,
+}
+
+/// Deletes the oldest unprotected segment videos until the rest fit in `cap`
+/// bytes. Protected footage is never deleted, so the folder can stay over
+/// the limit; `stuck` says so.
+pub fn prune(dir: &Path, cap: u64, protected: &BTreeSet<String>) -> io::Result<Pruned> {
+    let videos: Vec<(String, u64, bool)> = read_chain(dir)
         .into_iter()
         .filter_map(|link| {
             let size = fs::metadata(dir.join(&link.file)).ok()?.len();
-            Some((link.file, size))
+            Some((link.file, size, !link.projects.is_disjoint(protected)))
         })
         .collect();
-    let mut total: u64 = videos.iter().map(|(_, size)| size).sum();
-    let (mut count, mut freed) = (0, 0);
-    for (file, size) in videos {
+    let mut total: u64 = videos.iter().map(|(_, size, _)| size).sum();
+    let mut result = Pruned::default();
+    for (file, size, keep) in videos {
         if total <= cap {
             break;
         }
+        if keep {
+            continue;
+        }
         fs::remove_file(dir.join(file))?;
         total -= size;
-        freed += size;
-        count += 1;
+        result.freed += size;
+        result.count += 1;
     }
-    Ok((count, freed))
+    result.stuck = total > cap;
+    Ok(result)
 }
 
 pub fn format_bytes(bytes: u64) -> String {
@@ -90,6 +137,16 @@ mod tests {
 
     /// Writes a fake segment of `size` bytes and its chain line, the way the recorder does.
     fn add_segment(dir: &Path, previous: &mut Hash, start: i64, size: usize) {
+        add_segment_for(dir, previous, start, size, &[]);
+    }
+
+    fn add_segment_for(
+        dir: &Path,
+        previous: &mut Hash,
+        start: i64,
+        size: usize,
+        projects: &[&str],
+    ) {
         let file = format!("{start}.mp4");
         let bytes = vec![(start % 256) as u8; size];
         fs::write(dir.join(&file), &bytes).unwrap();
@@ -117,7 +174,7 @@ mod tests {
             timeline: chain::to_hex(&timeline),
             previous: chain::to_hex(previous),
             link: chain::to_hex(&link),
-            projects: Default::default(),
+            projects: projects.iter().map(|project| project.to_string()).collect(),
         };
         let mut chain_file = fs::OpenOptions::new()
             .create(true)
@@ -138,7 +195,9 @@ mod tests {
         assert_eq!(usage(dir.path()).bytes, 1000);
 
         // 1000 bytes over a cap of 550: the 400 and 300 byte videos go, leaving 300
-        assert_eq!(prune(dir.path(), 550).unwrap(), (2, 700));
+        let none = BTreeSet::new();
+        let pruned = prune(dir.path(), 550, &none).unwrap();
+        assert_eq!((pruned.count, pruned.freed, pruned.stuck), (2, 700, false));
         assert!(!dir.path().join("100.mp4").exists());
         assert!(!dir.path().join("200.mp4").exists());
         assert!(dir.path().join("300.mp4").exists());
@@ -147,10 +206,11 @@ mod tests {
             Usage {
                 bytes: 300,
                 segments: 4,
-                pruned: 2
+                pruned: 2,
+                protected_bytes: 0
             }
         );
-        assert_eq!(prune(dir.path(), 550).unwrap(), (0, 0));
+        assert_eq!(prune(dir.path(), 550, &none).unwrap(), Pruned::default());
 
         let verified = verify(dir.path()).unwrap();
         assert_eq!((verified.links.len(), verified.pruned), (4, 2));
@@ -163,7 +223,7 @@ mod tests {
         for start in [100, 200, 300] {
             add_segment(dir.path(), &mut previous, start, 50);
         }
-        prune(dir.path(), 60).unwrap();
+        prune(dir.path(), 60, &BTreeSet::new()).unwrap();
 
         // a kept video that was changed
         fs::write(dir.path().join("300.mp4"), vec![0; 50]).unwrap();
@@ -189,5 +249,35 @@ mod tests {
                 .unwrap_err()
                 .contains("timeline was changed")
         );
+    }
+
+    #[test]
+    fn protected_projects_are_skipped_even_when_that_leaves_the_folder_over_the_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut previous = GENESIS;
+        add_segment_for(dir.path(), &mut previous, 100, 400, &["school"]);
+        add_segment_for(dir.path(), &mut previous, 200, 300, &["hobby"]);
+        add_segment_for(dir.path(), &mut previous, 300, 200, &["hobby", "school"]);
+        add_segment_for(dir.path(), &mut previous, 400, 100, &["hobby"]);
+
+        assert!(set_protected(dir.path(), "school", true).unwrap());
+        assert!(!set_protected(dir.path(), "school", true).unwrap());
+        let protected = protected(dir.path());
+        assert_eq!(usage(dir.path()).protected_bytes, 600);
+
+        // cap 500: the oldest unprotected video (300 bytes) goes, then the 100 byte one;
+        // the 400 and 200 byte videos stay because "school" is in them, so 600 is left
+        let pruned = prune(dir.path(), 500, &protected).unwrap();
+        assert_eq!((pruned.count, pruned.freed, pruned.stuck), (2, 400, true));
+        assert!(dir.path().join("100.mp4").exists());
+        assert!(!dir.path().join("200.mp4").exists());
+        assert!(dir.path().join("300.mp4").exists());
+        assert!(!dir.path().join("400.mp4").exists());
+        assert_eq!(verify(dir.path()).unwrap().pruned, 2);
+
+        // once unprotected, the oldest goes too
+        assert!(set_protected(dir.path(), "school", false).unwrap());
+        let pruned = prune(dir.path(), 500, &self::protected(dir.path())).unwrap();
+        assert_eq!((pruned.count, pruned.stuck), (1, false));
     }
 }

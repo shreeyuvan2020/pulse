@@ -49,6 +49,11 @@ enum Command {
         #[arg(long)]
         out: Option<std::path::PathBuf>,
     },
+    /// Never delete this project's recordings to make room. Use it for a
+    /// project you plan to submit to a program.
+    Protect { project: String },
+    /// Allow this project's old recordings to be deleted again when space is needed.
+    Unprotect { project: String },
     /// Check that local recordings still match their hash chain.
     Verify { dir: Option<std::path::PathBuf> },
     /// Called by a coding agent's hooks with the hook payload on stdin.
@@ -108,6 +113,8 @@ fn main() -> ExitCode {
             out.unwrap_or_else(|| store.root().join("benchmark")),
             seconds,
         ),
+        Command::Protect { project } => protect(&store, &project, true),
+        Command::Unprotect { project } => protect(&store, &project, false),
         Command::Verify { dir } => verify(&dir.unwrap_or_else(|| store.root().join("recordings"))),
         Command::Install {
             adapter: Adapter::ClaudeCode,
@@ -299,6 +306,14 @@ fn print_status(store: &Store) {
             String::new()
         }
     );
+    let protected = recorder::storage::protected(&recordings);
+    if !protected.is_empty() {
+        println!(
+            "Protected from deletion: {} ({})",
+            protected.iter().cloned().collect::<Vec<_>>().join(", "),
+            recorder::storage::format_bytes(usage.protected_bytes)
+        );
+    }
     if let Some(free) = recorder::storage::free_bytes(store.root()) {
         println!("Free disk space: {}", recorder::storage::format_bytes(free));
     }
@@ -360,6 +375,23 @@ fn verify(dir: &Path) -> Result<(), String> {
             "{} of them had their video deleted to save space; their timelines still verify.",
             verified.pruned
         );
+    }
+    Ok(())
+}
+
+fn protect(store: &Store, project: &str, on: bool) -> Result<(), String> {
+    let recordings = store.root().join("recordings");
+    let changed = recorder::storage::set_protected(&recordings, project, on)
+        .map_err(|error| error.to_string())?;
+    match (on, changed) {
+        (true, true) => println!(
+            "{project}: its recordings will not be deleted to make room. Footage Pulse already deleted cannot come back."
+        ),
+        (true, false) => println!("{project} is already protected."),
+        (false, true) => {
+            println!("{project}: its old recordings can be deleted again when space is needed.")
+        }
+        (false, false) => println!("{project} was not protected."),
     }
     Ok(())
 }

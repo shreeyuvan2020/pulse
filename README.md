@@ -16,7 +16,7 @@ Pulse counts the time **you** spend in the loop with a coding agent: prompting, 
 
 - **Video codec:** Pulse does not build or ship H.264 itself. On first recording it downloads Cisco's prebuilt OpenH264 2.7.0 from `ciscobinary.openh264.org` into its data folder and loads it only if its SHA-256 matches a known Cisco release. OpenH264 Video Codec provided by Cisco Systems, Inc.
 
-- **Storage:** recordings are about 5-25 MB per recorded hour. Once the recordings folder passes 5 GB (`PULSE_MAX_STORAGE_GB` changes it), the oldest segment videos are deleted first. Each deleted segment keeps its hash-chain line and timeline (a few KB), so `pulse verify` still passes; that stretch just can no longer be submitted. Pulse also stops starting new segments when less than 1 GiB of disk is free, and `pulse status` shows usage and free space.
+- **Storage:** recordings are about 5-25 MB per recorded hour. Once the recordings folder passes 5 GB (`PULSE_MAX_STORAGE_GB` changes it), the oldest segment videos are deleted first. Each deleted segment keeps its hash-chain line and timeline (a few KB), so `pulse verify` still passes; that stretch just can no longer be submitted. Footage of a project you plan to submit can be protected with `pulse protect <project>`: it is never deleted to make room (the folder can then stay over the limit, and Pulse says so), until `pulse unprotect <project>`. Programs will do this automatically once you link a project. Pulse also stops starting new segments when less than 1 GiB of disk is free, and `pulse status` shows usage and free space.
 
 Everything stays on your computer as plain JSON Lines files you can read (`pulse events`). Events never contain prompt text, code or file paths.
 
@@ -32,7 +32,7 @@ cargo build --release
 ./target/release/pulse today                  # today's AI-assisted time
 ```
 
-Other commands: `pulse record --seconds 60` (measure recording overhead on this computer), `pulse verify`, `pulse report YYYY-MM-DD`, `pulse today --json`, `pulse events [YYYY-MM-DD]`, `pulse uninstall claude-code`.
+Other commands: `pulse protect <project>`, `pulse unprotect <project>`, `pulse record --seconds 60` (measure recording overhead on this computer), `pulse verify`, `pulse report YYYY-MM-DD`, `pulse today --json`, `pulse events [YYYY-MM-DD]`, `pulse uninstall claude-code`.
 
 Data lives in `%LOCALAPPDATA%\pulse` on Windows, `~/Library/Application Support/pulse` on macOS and `~/.local/share/pulse` on Linux (override with `PULSE_HOME`).
 
