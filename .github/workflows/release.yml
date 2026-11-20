@@ -22,18 +22,19 @@ jobs:
           sudo apt-get update && sudo apt-get install -y musl-tools
           rustup target add x86_64-unknown-linux-musl
           cargo build --release -p pulse --target x86_64-unknown-linux-musl
-      - name: Pack tarball
-        run: tar czf target/x86_64-unknown-linux-musl/release/pulse-linux-amd64.tar.gz -C target/x86_64-unknown-linux-musl/release pulse
       - name: Build the .deb
         run: |
           cargo install cargo-deb --locked
           cd crates/pulse && cargo deb --target x86_64-unknown-linux-musl
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          tar czf dist/pulse-linux-amd64.tar.gz -C target/x86_64-unknown-linux-musl/release pulse
+          cp target/debian/pulse_*_amd64.deb dist/
       - uses: actions/upload-artifact@v4
         with:
           name: linux
-          path: |
-            target/x86_64-unknown-linux-musl/release/pulse-linux-amd64.tar.gz
-            target/debian/pulse_*_amd64.deb
+          path: dist/
 
   macos:
     runs-on: macos-latest
@@ -52,12 +53,14 @@ jobs:
             -output target/release/pulse-universal
       - name: Bundle Pulse.app
         run: scripts/build-macos-app.sh target/release/pulse-universal target/Pulse.app
-      - name: Pack tarball
-        run: tar czf pulse-macos-universal.tar.gz -C target Pulse.app
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          tar czf dist/pulse-macos-universal.tar.gz -C target Pulse.app
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: pulse-macos-universal.tar.gz
+          path: dist/
 
   windows:
     runs-on: windows-latest
@@ -66,13 +69,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build
         run: cargo build --release -p pulse
-      - name: Pack zip
+      - name: Collect artifacts
         shell: pwsh
-        run: Compress-Archive -Path target\release\pulse.exe -DestinationPath pulse-windows-x86_64.zip
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path target\release\pulse.exe -DestinationPath dist\pulse-windows-x86_64.zip
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: pulse-windows-x86_64.zip
+          path: dist/
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -86,4 +91,13 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
-          generate_release_notes: true
+          body: |
+            Pulse is passive time tracking for building with AI coding agents: it counts the hours you spend in the loop (prompting, reading, reviewing, steering) and records your screen at one frame per second as proof, kept on your computer until you submit it.
+
+            This is the first release. The binaries are not signed yet, so Windows SmartScreen and macOS Gatekeeper will warn.
+
+            - Linux: `pulse-linux-amd64.tar.gz`, or `pulse_0.1.0-1_amd64.deb` (Debian/Ubuntu)
+            - macOS: `pulse-macos-universal.tar.gz` (contains Pulse.app, Apple Silicon and Intel)
+            - Windows: `pulse-windows-x86_64.zip`
+
+            Install: `curl -fsSL https://raw.githubusercontent.com/shreeyuvan2020/pulse/v0.1.0/packaging/install.sh | bash`
