@@ -70,7 +70,28 @@ To send your time: make a token on your profile page ("Connect a computer"), run
 - **macOS:** the same one-liner installs `Pulse.app` into `~/Applications` (move it to `/Applications` to keep it in the menu bar every day), or `brew install pulse` from a tap of `packaging/homebrew/pulse.rb`.
 - **Windows:** the release zip on the release page, or `winget install HackClub.Pulse` / `scoop install pulse` once the manifests in `packaging/windows` are published with their hashes.
 
-Pushing a `v*` tag builds the tarball, the `.deb`, `Pulse.app` and the Windows zip through `.github/workflows/release.yml` and attaches them to a GitHub Release. The binaries are not signed yet: Windows SmartScreen and macOS Gatekeeper will warn until SignPath signing and Apple notarization are set up.
+Pushing a `v*` tag builds the tarball, the `.deb`, `Pulse.app` and the Windows zip through `.github/workflows/release.yml` and attaches them to a GitHub Release. The workflow signs the Windows exe (SignPath) and notarizes `Pulse.app` (Apple) once the maintainers' credentials are configured ([docs/signing.md](docs/signing.md)). Until then, and for v0.1.0, binaries are unsigned: Windows SmartScreen and macOS Gatekeeper will warn.
+
+## Code signing policy
+
+Windows builds are signed with a certificate provided by the SignPath Foundation once signing is set up; macOS builds are signed with the maintainers' Apple Developer ID and notarized by Apple. Binaries are only signed when built from this repository's source by GitHub Actions on GitHub-hosted runners.
+
+- Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+- Committers, reviewers and approvers: [@shreeyuvan2020](https://github.com/shreeyuvan2020) (more people will be listed here as they join).
+- Privacy policy: see [Privacy](#privacy).
+
+## Privacy
+
+Pulse sends nothing anywhere until you run `pulse login <server>`, and then only to that server: credited time per project and 5-minute slot, prompt counts and tool names; never recordings, prompts, code or file paths. Recordings leave your computer only when you run `pulse submit` and confirm. The one other connection Pulse makes is the first-recording download of Cisco's OpenH264 library from `ciscobinary.openh264.org` (checked against a known SHA-256), which sends no information about you beyond what any HTTPS download does. Pulse has no analytics or crash reporting.
+
+## Uninstalling
+
+Pulse changes your system only where you ask it to, and each change has an undo:
+
+- `pulse uninstall claude-code` removes the Claude Code hooks; remove the snippet `pulse terminal init` printed from your shell config.
+- `pulse logout` disconnects from the server. Withdraw submitted hours from your profile page to delete their recordings from the server.
+- Delete the program: `pulse.exe` (Windows, or `scoop uninstall pulse` / `winget uninstall HackClub.Pulse`), `Pulse.app` (macOS), `~/.local/bin/pulse` (Linux) or `sudo apt remove pulse` (`.deb`).
+- Delete your data folder to remove local events and recordings: `%LOCALAPPDATA%\pulse` (Windows), `~/Library/Application Support/pulse` (macOS) or `~/.local/share/pulse` (Linux).
 
 ## Development
 

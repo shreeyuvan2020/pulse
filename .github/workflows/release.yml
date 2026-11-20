@@ -2,6 +2,10 @@ name: Release
 
 # Builds installable artifacts for every OS. Push a v* tag to create the
 # GitHub Release; workflow_dispatch also runs the builds without releasing.
+#
+# Windows (SignPath) and macOS (Developer ID + notarization) signing steps run
+# only when their credentials are configured, so the workflow still produces
+# unsigned builds without them. Setup: docs/signing.md.
 
 on:
   push:
@@ -10,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   linux:
@@ -33,11 +38,19 @@ jobs:
           cp target/debian/pulse_*_amd64.deb dist/
       - uses: actions/upload-artifact@v4
         with:
-          name: linux
+          name: dist-linux
           path: dist/
 
   macos:
     runs-on: macos-latest
+    env:
+      # base64 of the Developer ID Application .p12, and its password
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      # App Store Connect API key (.p8 contents, base64) used by notarytool
+      APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -53,30 +66,69 @@ jobs:
             -output target/release/pulse-universal
       - name: Bundle Pulse.app
         run: scripts/build-macos-app.sh target/release/pulse-universal target/Pulse.app
+      - name: Sign and notarize Pulse.app
+        if: env.MACOS_CERTIFICATE_P12 != '' && env.APPLE_API_KEY_P8 != ''
+        run: scripts/sign-macos-app.sh target/Pulse.app
       - name: Collect artifacts
         run: |
           mkdir -p dist
-          tar czf dist/pulse-macos-universal.tar.gz -C target Pulse.app
+          COPYFILE_DISABLE=1 tar czf dist/pulse-macos-universal.tar.gz -C target Pulse.app
       - uses: actions/upload-artifact@v4
         with:
-          name: macos
+          name: dist-macos
           path: dist/
 
   windows:
     runs-on: windows-latest
+    env:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Build
         run: cargo build --release -p pulse
+      - name: Read the crate version
+        id: crate
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          $crate = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq pulse | Select-Object -ExpandProperty version
+          if ($env:IS_TAG -eq 'true' -and "v$crate" -ne $env:REF_NAME) { throw "tag $env:REF_NAME does not match pulse $crate" }
+          "version=$crate" >> $env:GITHUB_OUTPUT
+      # SignPath signs a GitHub-stored artifact, so the unsigned exe is
+      # uploaded first. Only for release tags, and only when the SignPath
+      # token is configured.
+      - name: Upload unsigned exe
+        id: upload-unsigned
+        if: startsWith(github.ref, 'refs/tags/v') && env.SIGNPATH_API_TOKEN != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: target/release/pulse.exe
+      - name: Sign with SignPath
+        if: startsWith(github.ref, 'refs/tags/v') && env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: pulse
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+          parameters: |
+            version: "${{ steps.crate.outputs.version }}"
       - name: Collect artifacts
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path target\release\pulse.exe -DestinationPath dist\pulse-windows-x86_64.zip
+          $exe = if (Test-Path signed\pulse.exe) { "signed\pulse.exe" } else { "target\release\pulse.exe" }
+          Compress-Archive -Path $exe -DestinationPath dist\pulse-windows-x86_64.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: windows
+          name: dist-windows
           path: dist/
 
   release:
@@ -86,6 +138,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: dist-*
           merge-multiple: true
           path: artifacts
       - uses: softprops/action-gh-release@v2
@@ -94,7 +147,7 @@ jobs:
           body: |
             Pulse is passive time tracking for building with AI coding agents: it counts the hours you spend in the loop (prompting, reading, reviewing, steering) and records your screen at one frame per second as proof, kept on your computer until you submit it.
 
-            This is the first release. The binaries are not signed yet, so Windows SmartScreen and macOS Gatekeeper will warn.
+            Windows and macOS builds are signed when the maintainers' signing credentials are set up; if your system warns about an unknown publisher, see docs/signing.md.
 
             - Linux: `pulse-linux-amd64.tar.gz`, or `pulse_0.1.0-1_amd64.deb` (Debian/Ubuntu)
             - macOS: `pulse-macos-universal.tar.gz` (contains Pulse.app, Apple Silicon and Intel)

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The hardened runtime (required for notarization) only loads libraries
+	     signed by the same team. Pulse downloads Cisco's OpenH264 library on
+	     first recording, checks its SHA-256, and loads it, so library
+	     validation has to be off. Nothing else is requested: no JIT, no
+	     unsigned memory, no network or camera entitlements. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>
