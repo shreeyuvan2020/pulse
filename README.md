@@ -56,6 +56,10 @@ A GitHub App gives two things, each switched on by its own settings:
 
 A project named `github.com/owner/repo` links to the repository and shows its push count and last push, but only when its owner has made the project public, like its name.
 
+### Submitting hours to a program
+
+`pulse submit <program> <project>` uploads a project's recordings so a program's reviewers can see the work behind the hours. It shows what would be sent (add `--dry-run` to stop there), flags segments that also covered other projects, lets you leave segments out with `--skip`, and asks before uploading. The daemon commits each recorded segment's hash-chain link to the server as it records, so the server can later check that an upload is the recording that existed at that time. Hours of a segment can be submitted once; withdrawing a submission on your profile deletes its recordings. Servers enable it with `PULSE_STORAGE_DIR` and `PULSE_PROGRAM_KEYS`. What a program's review tool reads is described in [docs/evidence.md](docs/evidence.md).
+
 Tests need a Postgres they may create databases in: `PULSE_TEST_DATABASE_URL=postgres://user@localhost/postgres cargo test -p pulse-server`. 
 
 To send your time: make a token on your profile page ("Connect a computer"), run `pulse login <server>` and paste it, then keep `pulse daemon` running. It uploads credited time every minute (per project and 5-minute slot, with prompt counts and tool names; never recordings, prompts or paths). `pulse sync` sends right away, `pulse logout` disconnects. Plain `http://` is only accepted for localhost.

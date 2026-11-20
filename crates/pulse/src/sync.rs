@@ -3,6 +3,10 @@
 //! credited, a prompt count and the tool and model names. Recordings,
 //! transcripts and file paths never go through here.
 //!
+//! It also commits each recorded segment's hash-chain link (hashes and times
+//! only, no video) so the server knows when a segment was recorded. That is
+//! what makes a recording submitted later checkable.
+//!
 //! The same slot is sent again while it is still changing and the server
 //! replaces its old numbers, so sending is safe to repeat and a computer that
 //! was offline catches up by itself.
@@ -20,6 +24,7 @@ use pulse_core::{Event, EventKind, Params, attribute};
 use serde::{Deserialize, Serialize};
 
 use crate::now;
+use crate::recorder::{self, Link};
 use crate::store::Store;
 
 const SLOT: i64 = 300;
@@ -29,8 +34,9 @@ const MAX_LOOKBACK: i64 = 518_400; // 6 * 24 * 60 * 60
 /// Time is sent again for this long after it happens, because events can reach
 /// the spool late and a long agent turn can add credit to earlier seconds.
 const RESEND_WINDOW: i64 = 3600;
-/// The server's limit per request.
+/// The server's limits per request.
 const CREDITS_PER_REQUEST: usize = 300;
+const LINKS_PER_REQUEST: usize = 200;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct Connection {
@@ -107,6 +113,9 @@ struct State {
     /// Everything before this slot is final and need not be sent again.
     synced_until: Option<i64>,
     last_upload: Option<i64>,
+    /// How many lines of `chain.jsonl` the server has been sent.
+    #[serde(default)]
+    chain_sent: usize,
 }
 
 fn read_state(root: &Path) -> State {
@@ -235,31 +244,96 @@ struct Rejection {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Outcome {
     pub sent: usize,
+    /// Recorded segments committed to the server.
+    pub links: usize,
     /// The server's reasons for entries it refused. Those are not retried.
     pub rejected: Vec<String>,
 }
 
-fn post(connection: &Connection, credits: &[Credit]) -> Result<Reply, SyncError> {
+/// One request to the server. `body` is sent as is. Failures carry the
+/// server's own explanation when it gave one.
+pub fn call(
+    connection: &Connection,
+    method: &str,
+    path: &str,
+    content_type: &str,
+    body: Vec<u8>,
+    timeout: Duration,
+) -> Result<String, SyncError> {
+    let failed = |error: &dyn std::fmt::Display| SyncError::Failed(error.to_string());
     let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(15)))
+        .timeout_global(Some(timeout))
+        .http_status_as_error(false)
         .build()
         .into();
-    let body = serde_json::json!({ "credits": credits }).to_string();
-    let response = agent
-        .post(format!("{}/api/credits", connection.server))
+    let request = ureq::http::Request::builder()
+        .method(method)
+        .uri(format!("{}{path}", connection.server))
         .header("authorization", format!("Bearer {}", connection.token))
-        .header("content-type", "application/json")
-        .send(body)
-        .map_err(|error| match error {
-            ureq::Error::StatusCode(401) => SyncError::Unauthorized,
-            error => SyncError::Failed(error.to_string()),
-        })?;
+        .header("content-type", content_type)
+        .body(body)
+        .map_err(|error| failed(&error))?;
+    let mut response = agent.run(request).map_err(|error| failed(&error))?;
+    let status = response.status().as_u16();
     let text = response
-        .into_body()
+        .body_mut()
         .read_to_string()
-        .map_err(|error| SyncError::Failed(error.to_string()))?;
+        .map_err(|error| failed(&error))?;
+    match status {
+        200..=299 => Ok(text),
+        401 => Err(SyncError::Unauthorized),
+        _ => Err(SyncError::Failed(
+            serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|json| json["error"].as_str().map(str::to_owned))
+                .map_or_else(
+                    || format!("the server answered {status}"),
+                    |message| format!("the server said: {message}"),
+                ),
+        )),
+    }
+}
+
+fn post_json(
+    connection: &Connection,
+    path: &str,
+    body: &serde_json::Value,
+) -> Result<Reply, SyncError> {
+    let text = call(
+        connection,
+        "POST",
+        path,
+        "application/json",
+        body.to_string().into_bytes(),
+        Duration::from_secs(15),
+    )?;
     serde_json::from_str(&text)
         .map_err(|_| SyncError::Failed("the server's reply made no sense".into()))
+}
+
+fn post(connection: &Connection, credits: &[Credit]) -> Result<Reply, SyncError> {
+    post_json(
+        connection,
+        "/api/credits",
+        &serde_json::json!({ "credits": credits }),
+    )
+}
+
+fn post_links(connection: &Connection, links: &[Link]) -> Result<Reply, SyncError> {
+    let links: Vec<_> = links
+        .iter()
+        .map(|link| {
+            serde_json::json!({
+                "start": link.start, "end": link.end, "previous": link.previous,
+                "video": link.video, "timeline": link.timeline, "link": link.link,
+            })
+        })
+        .collect();
+    post_json(
+        connection,
+        "/api/chain",
+        &serde_json::json!({ "links": links }),
+    )
 }
 
 /// Checks that the server accepts the token, without sending any time.
@@ -301,13 +375,29 @@ pub fn run_once(
     } else if force {
         verify(connection)?;
     }
+    let links = recorder::read_chain(&root.join("recordings"));
+    let mut chain_sent = state.chain_sent.min(links.len());
+    while chain_sent < links.len() {
+        let chunk = &links[chain_sent..(chain_sent + LINKS_PER_REQUEST).min(links.len())];
+        let reply = post_links(connection, chunk)?;
+        outcome.links += chunk.len();
+        outcome
+            .rejected
+            .extend(reply.rejected.into_iter().map(|entry| entry.reason));
+        chain_sent += chunk.len();
+        last_upload = Some(now);
+    }
     let synced_until = Some(slot_start(to - RESEND_WINDOW).max(from));
-    if synced_until != state.synced_until || last_upload != state.last_upload {
+    if synced_until != state.synced_until
+        || last_upload != state.last_upload
+        || chain_sent != state.chain_sent
+    {
         let _ = write_state(
             root,
             &State {
                 synced_until,
                 last_upload,
+                chain_sent,
             },
         );
     }
@@ -574,7 +664,8 @@ mod tests {
             outcome,
             Outcome {
                 sent: 3,
-                rejected: vec!["slot is in the future".into()]
+                rejected: vec!["slot is in the future".into()],
+                ..Outcome::default()
             }
         );
         assert_eq!(last_upload(root.path()), Some(now));
@@ -638,11 +729,97 @@ mod tests {
             &State {
                 synced_until: Some(5),
                 last_upload: Some(6),
+                chain_sent: 7,
             },
         )
         .unwrap();
         assert!(remove(root.path()).unwrap());
         assert_eq!((load(root.path()), last_upload(root.path())), (None, None));
         assert!(!remove(root.path()).unwrap());
+    }
+
+    fn chain_line(start: i64, tag: char) -> String {
+        let hash = |c: char| c.to_string().repeat(64);
+        format!(
+            r#"{{"start":{start},"end":{},"file":"{start}.mp4","video":"{}","timeline":"{}","previous":"{}","link":"{}","projects":["game"]}}"#,
+            start + 300,
+            hash(tag),
+            hash('b'),
+            hash('0'),
+            hash('c'),
+        )
+    }
+
+    #[test]
+    fn recorded_segments_are_committed_once_each_with_only_hashes_and_times() {
+        let root = tempfile::tempdir().unwrap();
+        let recordings = root.path().join("recordings");
+        fs::create_dir_all(&recordings).unwrap();
+        let line = |start, tag| chain_line(start, tag);
+        fs::write(
+            recordings.join("chain.jsonl"),
+            format!("{}\n{}\n", line(START, 'a'), line(START + 300, 'd')),
+        )
+        .unwrap();
+        let (server, received) = stub(vec![(
+            200,
+            r#"{"accepted":1,"rejected":[{"index":1,"reason":"segment ends in the future"}]}"#,
+        )]);
+        let connection = connection(server);
+        let now = START + 10_000;
+
+        let outcome = run_once(root.path(), &connection, now, false).unwrap();
+        assert_eq!(outcome.links, 2);
+        assert_eq!(outcome.rejected, vec!["segment ends in the future"]);
+        let (request, _, body) = received.recv().unwrap();
+        assert_eq!(request, "POST /api/chain HTTP/1.1");
+        let sent = body["links"].as_array().unwrap();
+        assert_eq!(sent.len(), 2);
+        let mut keys: Vec<&String> = sent[0].as_object().unwrap().keys().collect();
+        keys.sort();
+        // no file names and no project names: they are not the server's business
+        assert_eq!(
+            keys,
+            ["end", "link", "previous", "start", "timeline", "video"]
+        );
+        assert_eq!(sent[1]["video"], "d".repeat(64));
+
+        // nothing new, so nothing is sent (the stub has no second answer to give)
+        assert_eq!(
+            run_once(root.path(), &connection, now, false).unwrap(),
+            Outcome::default()
+        );
+        // a segment recorded later is the only one sent next
+        let mut chain = fs::read_to_string(recordings.join("chain.jsonl")).unwrap();
+        chain.push_str(&format!("{}\n", line(START + 600, 'e')));
+        fs::write(recordings.join("chain.jsonl"), chain).unwrap();
+        let (server, received) = stub(vec![(200, r#"{"accepted":1,"rejected":[]}"#)]);
+        let outcome = run_once(root.path(), &self::connection(server), now, false).unwrap();
+        assert_eq!(outcome.links, 1);
+        assert_eq!(
+            received.recv().unwrap().2["links"][0]["video"],
+            "e".repeat(64)
+        );
+    }
+
+    #[test]
+    fn the_servers_own_explanation_reaches_the_person() {
+        let (server, _) = stub(vec![(
+            400,
+            r#"{"error":"that program does not take submissions"}"#,
+        )]);
+        let error = call(
+            &connection(server),
+            "POST",
+            "/x",
+            "application/json",
+            b"{}".to_vec(),
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the server said: that program does not take submissions"
+        );
     }
 }

@@ -7,6 +7,7 @@ mod project;
 mod recorder;
 mod report;
 mod store;
+mod submit;
 mod sync;
 mod tail;
 
@@ -82,6 +83,29 @@ enum Command {
     },
     /// Print the raw events Pulse stored for a day, exactly as saved.
     Events { date: Option<NaiveDate> },
+    /// Submit a project's recordings to a program so reviewers can see the
+    /// work behind your hours. Shows what would be sent and asks first.
+    Submit {
+        /// The program to submit to, as the server lists it.
+        program: String,
+        /// The project, as `pulse status` and your profile name it.
+        project: String,
+        /// Only recordings from this day on (YYYY-MM-DD, local time).
+        #[arg(long)]
+        from: Option<NaiveDate>,
+        /// Only recordings up to and including this day.
+        #[arg(long)]
+        to: Option<NaiveDate>,
+        /// Leave out the segment starting at this unix time (repeat for more).
+        #[arg(long)]
+        skip: Vec<i64>,
+        /// Show what would be submitted and stop.
+        #[arg(long)]
+        dry_run: bool,
+        /// Do not ask for confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Connect this computer to a Pulse server, so your time shows on your
     /// profile. Make a token on the server's page ("Connect a computer"); you
     /// are asked to paste it, or it is read from standard input.
@@ -155,6 +179,26 @@ fn main() -> ExitCode {
             }
             Ok(())
         }
+        Command::Submit {
+            program,
+            project,
+            from,
+            to,
+            skip,
+            dry_run,
+            yes,
+        } => submit::run(
+            &store,
+            &submit::Options {
+                program,
+                project,
+                from,
+                to,
+                skip,
+                dry_run,
+                yes,
+            },
+        ),
         Command::Login { server } => login(&store, &server),
         Command::Logout => logout(&store),
         Command::Sync => sync_now(&store),

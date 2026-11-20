@@ -258,11 +258,11 @@ impl Recorder {
     }
 }
 
-fn timeline_file(video_file: &str) -> String {
+pub fn timeline_file(video_file: &str) -> String {
     format!("{}.timeline.json", video_file.trim_end_matches(".mp4"))
 }
 
-fn read_chain(dir: &Path) -> Vec<Link> {
+pub fn read_chain(dir: &Path) -> Vec<Link> {
     fs::File::open(dir.join("chain.jsonl"))
         .map(|file| {
             BufReader::new(file)
