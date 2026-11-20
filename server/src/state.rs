@@ -5,11 +5,13 @@ use sqlx::PgPool;
 use tokio::sync::broadcast;
 
 use crate::config::Config;
+use crate::storage::Storage;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
     pub config: Arc<Config>,
+    pub storage: Option<Storage>,
     pub http: reqwest::Client,
     pub live: broadcast::Sender<CreditEvent>,
 }
@@ -18,6 +20,7 @@ impl AppState {
     pub fn new(db: PgPool, config: Config) -> AppState {
         AppState {
             db,
+            storage: config.storage_dir.clone().map(Storage::new),
             config: Arc::new(config),
             http: reqwest::Client::builder()
                 .user_agent("pulse-server")

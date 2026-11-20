@@ -7,10 +7,14 @@ pub mod api;
 pub mod auth;
 pub mod config;
 pub mod error;
+pub mod evidence;
 pub mod github;
 pub mod live;
+pub mod programs;
 pub mod state;
 pub mod stats;
+pub mod storage;
+pub mod submissions;
 pub mod web;
 
 use axum::Router;
@@ -25,6 +29,8 @@ pub fn router(state: AppState) -> Router {
         .merge(api::routes())
         .merge(github::routes())
         .merge(live::routes())
+        .merge(submissions::routes())
+        .merge(programs::routes())
         .layer(DefaultBodyLimit::max(1 << 20)) // 1 MiB: 1 << 20
         .layer(axum::middleware::map_response(web::security_headers))
         .with_state(state)

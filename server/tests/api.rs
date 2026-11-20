@@ -88,6 +88,8 @@ async fn harness(configure: impl FnOnce(&mut Config)) -> Option<Harness> {
         hca_client_secret: None,
         dev_login: true,
         github: Default::default(),
+        storage_dir: None,
+        program_keys: vec![],
     };
     configure(&mut config);
     let state = AppState::new(db, config);
@@ -1159,4 +1161,688 @@ async fn pushes_are_refused_outright_when_no_webhook_secret_is_set() {
         .await;
     assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
     h.finish().await;
+}
+
+// ---- submissions ----
+
+const ARI_KEY: &str = "ari-key-0123456789abcdef0123456789abcdef";
+const OTHER_KEY: &str = "other-key-0123456789abcdef0123456789abcd";
+
+struct Seg {
+    video: Vec<u8>,
+    timeline: Value,
+    link: String,
+    body: Value,
+}
+
+/// A segment the way the desktop client records it: a video, a per-second
+/// timeline and the hash-chain link that commits to both.
+fn seg(previous: &str, start: i64, seconds: i64, working: bool, tag: u8) -> Seg {
+    use pulse_core::chain::{self, Second};
+    let mut video = vec![0, 0, 0, 24];
+    video.extend(b"ftypisom");
+    video.extend([tag; 20]);
+    let timeline: Vec<Second> = (start..start + seconds)
+        .map(|t| Second {
+            t,
+            change: if working { 40 } else { 0 },
+            input: working,
+        })
+        .collect();
+    let previous_hash = chain::from_hex(previous).unwrap();
+    let video_hash = chain::sha256(&video);
+    let timeline_hash = chain::timeline_hash(&timeline);
+    let link = chain::to_hex(&chain::link(
+        &previous_hash,
+        start,
+        start + seconds,
+        &video_hash,
+        &timeline_hash,
+    ));
+    Seg {
+        video,
+        timeline: json!({ "seconds": timeline.iter().map(|s| json!([s.t, s.change, u8::from(s.input)])).collect::<Vec<_>>() }),
+        body: json!({ "start": start, "end": start + seconds, "previous": previous, "video": chain::to_hex(&video_hash),
+                      "timeline": chain::to_hex(&timeline_hash), "link": link }),
+        link,
+    }
+}
+
+impl Harness {
+    fn bearer(token: &str) -> Vec<(&'static str, String)> {
+        vec![("authorization", format!("Bearer {token}"))]
+    }
+
+    async fn put_bytes(&self, uri: &str, token: &str, bytes: Vec<u8>) -> Reply {
+        let request = Request::builder()
+            .method("PUT")
+            .uri(uri)
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from(bytes))
+            .unwrap();
+        let response = self.app.clone().oneshot(request).await.unwrap();
+        let (parts, body) = response.into_parts();
+        Reply {
+            status: parts.status,
+            headers: parts.headers,
+            body: body.collect().await.unwrap().to_bytes().to_vec(),
+        }
+    }
+
+    async fn submit(&self, token: &str, program: &str, project: &str, links: &[&String]) -> Reply {
+        let body = json!({ "program": program, "project": project, "links": links });
+        self.call("POST", "/api/submissions", &Self::bearer(token), Some(body))
+            .await
+    }
+
+    async fn register(&self, token: &str, segments: &[&Seg]) -> Value {
+        let links: Vec<Value> = segments.iter().map(|s| s.body.clone()).collect();
+        self.call(
+            "POST",
+            "/api/chain",
+            &Self::bearer(token),
+            Some(json!({ "links": links })),
+        )
+        .await
+        .json()
+    }
+
+    async fn upload(&self, token: &str, id: i64, segment: &Seg) -> (StatusCode, StatusCode) {
+        let video = self
+            .put_bytes(
+                &format!("/api/submissions/{id}/segments/{}/video", segment.link),
+                token,
+                segment.video.clone(),
+            )
+            .await;
+        let timeline = self
+            .call(
+                "PUT",
+                &format!("/api/submissions/{id}/segments/{}/timeline", segment.link),
+                &Self::bearer(token),
+                Some(segment.timeline.clone()),
+            )
+            .await;
+        (video.status, timeline.status)
+    }
+}
+
+async fn submission_harness() -> Option<(Harness, tempfile::TempDir)> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_path_buf();
+    let other = OTHER_KEY;
+    let h = harness(move |config| {
+        config.storage_dir = Some(path);
+        config.program_keys = vec![
+            ("ari".into(), ARI_KEY.into()),
+            ("other".into(), other.into()),
+        ];
+    })
+    .await?;
+    Some((h, dir))
+}
+
+#[tokio::test]
+async fn hours_are_submitted_with_the_recordings_that_back_them_and_programs_see_only_their_own() {
+    let Some((h, _dir)) = submission_harness().await else {
+        return;
+    };
+    let session = h.sign_in("rowan").await;
+    let (_, token) = h.new_token(&session, "laptop").await;
+    let project = "github.com/rowan/cs2-web";
+    let genesis = "0".repeat(64);
+    let base = (now() - 1200) / 300 * 300;
+    // a: 100 s of work; b: 60 s of the same range spent on something the person leaves out; c: 50 s of work after a quiet stretch
+    let a = seg(&genesis, base, 100, true, 1);
+    let b = seg(&a.link, base + 100, 60, true, 2);
+    let c = seg(&b.link, base + 400, 50, true, 3);
+    h.send(
+        &token,
+        json!([{ "project": project, "slot": base, "seconds": 150 }]),
+    )
+    .await;
+    let registered = h.register(&token, &[&a, &b, &c]).await;
+    assert_eq!(registered["accepted"], 3, "{registered}");
+
+    // asking for segments the server never saw, or for a program that does not exist
+    let ghost = seg(&genesis, base + 1000, 10, true, 9);
+    assert_eq!(
+        h.submit(&token, "ari", project, &[&ghost.link])
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        h.submit(&token, "nope", project, &[&a.link]).await.status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        h.submit(&token, "ari", project, &[&a.link, &a.link])
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
+
+    let made = h
+        .submit(&token, "ari", project, &[&a.link, &c.link])
+        .await
+        .json();
+    let id = made["id"].as_i64().unwrap();
+    assert_eq!(
+        made["omitted"], 1,
+        "b sits inside the range and must be listed as omitted: {made}"
+    );
+
+    // nothing can be finalized, or seen by the program, before everything is uploaded
+    let early = h
+        .call(
+            "POST",
+            &format!("/api/submissions/{id}/finalize"),
+            &Harness::bearer(&token),
+            None,
+        )
+        .await;
+    assert_eq!(early.status, StatusCode::CONFLICT);
+    let key = |key: &str| vec![("authorization", format!("Bearer {key}"))];
+    assert_eq!(
+        h.call(
+            "GET",
+            &format!("/api/programs/submissions/{id}/evidence"),
+            &key(ARI_KEY),
+            None
+        )
+        .await
+        .status,
+        StatusCode::NOT_FOUND
+    );
+
+    // a video that is not the one committed, an unfinished MP4, a changed timeline: all refused
+    let mut swapped = a.video.clone();
+    swapped[20] ^= 1;
+    let wrong = h
+        .put_bytes(
+            &format!("/api/submissions/{id}/segments/{}/video", a.link),
+            &token,
+            swapped,
+        )
+        .await;
+    assert_eq!(wrong.status, StatusCode::BAD_REQUEST);
+    let not_mp4 = h
+        .put_bytes(
+            &format!("/api/submissions/{id}/segments/{}/video", a.link),
+            &token,
+            vec![7; 64],
+        )
+        .await;
+    assert_eq!(not_mp4.status, StatusCode::BAD_REQUEST);
+    let mut edited = a.timeline.clone();
+    edited["seconds"][3][1] = json!(999);
+    let changed = h
+        .call(
+            "PUT",
+            &format!("/api/submissions/{id}/segments/{}/timeline", a.link),
+            &Harness::bearer(&token),
+            Some(edited),
+        )
+        .await;
+    assert_eq!(changed.status, StatusCode::BAD_REQUEST);
+    // the omitted segment takes no upload, and a stranger's token cannot upload to this submission
+    assert_eq!(
+        h.upload(&token, id, &b).await,
+        (StatusCode::NOT_FOUND, StatusCode::NOT_FOUND)
+    );
+    let sam = h.sign_in("sam").await;
+    let (_, sam_token) = h.new_token(&sam, "laptop").await;
+    assert_eq!(
+        h.upload(&sam_token, id, &a).await,
+        (StatusCode::NOT_FOUND, StatusCode::NOT_FOUND)
+    );
+
+    assert_eq!(
+        h.upload(&token, id, &a).await,
+        (StatusCode::NO_CONTENT, StatusCode::NO_CONTENT)
+    );
+    assert_eq!(
+        h.upload(&token, id, &c).await,
+        (StatusCode::NO_CONTENT, StatusCode::NO_CONTENT)
+    );
+    let done = h
+        .call(
+            "POST",
+            &format!("/api/submissions/{id}/finalize"),
+            &Harness::bearer(&token),
+            None,
+        )
+        .await
+        .json();
+    // a is 100 s and c is 50 s of continuous work; b was left out
+    assert_eq!(
+        (
+            done["recorded_seconds"].as_i64(),
+            done["active_seconds"].as_i64(),
+            done["omitted_seconds"].as_i64(),
+            done["claimed_seconds"].as_i64()
+        ),
+        (Some(150), Some(150), Some(60), Some(150)),
+        "{done}"
+    );
+
+    // the program reads it
+    assert_eq!(
+        h.call("GET", "/api/programs/submissions", &[], None)
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        h.call("GET", "/api/programs/submissions", &key("wrong"), None)
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    let listed = h
+        .call(
+            "GET",
+            "/api/programs/submissions?since=0",
+            &key(ARI_KEY),
+            None,
+        )
+        .await
+        .json();
+    assert_eq!(listed["submissions"].as_array().unwrap().len(), 1);
+    assert_eq!(listed["submissions"][0]["maker"], "rowan");
+    assert!(
+        h.call(
+            "GET",
+            "/api/programs/submissions?since=0",
+            &key(OTHER_KEY),
+            None
+        )
+        .await
+        .json()["submissions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        h.call(
+            "GET",
+            &format!("/api/programs/submissions/{id}/evidence"),
+            &key(OTHER_KEY),
+            None
+        )
+        .await
+        .status,
+        StatusCode::NOT_FOUND
+    );
+
+    let doc = h
+        .call(
+            "GET",
+            &format!("/api/programs/submissions/{id}/evidence"),
+            &key(ARI_KEY),
+            None,
+        )
+        .await
+        .json();
+    assert_eq!(doc["format"], "pulse.evidence.v1");
+    assert_eq!(
+        (
+            &doc["totals"]["active_seconds"],
+            &doc["totals"]["omitted_seconds"]
+        ),
+        (&json!(150), &json!(60))
+    );
+    assert_eq!(
+        doc["submission"]["project_url"],
+        "https://github.com/rowan/cs2-web"
+    );
+    assert_eq!(doc["checks"]["segments"], 2);
+    assert_eq!(doc["checks"]["omitted_segments"], 1);
+    assert_eq!(doc["checks"]["segments_committed_late"], 0);
+    let runs: Vec<(i64, i64, &str)> = doc["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["start"].as_i64().unwrap(),
+                r["end"].as_i64().unwrap(),
+                r["state"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        runs,
+        vec![
+            (base, base + 100, "active"),
+            (base + 100, base + 160, "omitted"),
+            (base + 400, base + 450, "active")
+        ]
+    );
+    let listed_segments = doc["segments"].as_array().unwrap();
+    assert_eq!(listed_segments.len(), 3);
+    assert_eq!(
+        listed_segments[1]["video_path"],
+        Value::Null,
+        "an omitted segment has no recording to fetch"
+    );
+
+    // a segment whose link reached the server long after it ended is flagged, not hidden
+    sqlx::query("update chain_links set received_at = end_at + 7200 where link = $1")
+        .bind(&c.link)
+        .execute(&h.state.db)
+        .await
+        .unwrap();
+    let late = h
+        .call(
+            "GET",
+            &format!("/api/programs/submissions/{id}/evidence"),
+            &key(ARI_KEY),
+            None,
+        )
+        .await
+        .json();
+    assert_eq!(
+        (
+            &late["checks"]["segments_committed_late"],
+            &late["checks"]["max_commit_delay_seconds"]
+        ),
+        (&json!(1), &json!(7200))
+    );
+
+    // the recording streams back with range requests, byte for byte, and its timeline too
+    let video_path = listed_segments[0]["video_path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let full = h.call("GET", &video_path, &key(ARI_KEY), None).await;
+    assert_eq!(
+        (full.status, full.body.clone()),
+        (StatusCode::OK, a.video.clone())
+    );
+    let mut ranged = key(ARI_KEY);
+    ranged.push(("range", "bytes=4-7".into()));
+    let part = h.call("GET", &video_path, &ranged, None).await;
+    assert_eq!(
+        (part.status, part.body),
+        (StatusCode::PARTIAL_CONTENT, b"ftyp".to_vec())
+    );
+    assert_eq!(
+        h.call("GET", &video_path, &key(OTHER_KEY), None)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let omitted_video = format!("/api/programs/submissions/{id}/segments/{}/video", b.link);
+    assert_eq!(
+        h.call("GET", &omitted_video, &key(ARI_KEY), None)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let timeline = h
+        .call(
+            "GET",
+            listed_segments[0]["timeline_path"].as_str().unwrap(),
+            &key(ARI_KEY),
+            None,
+        )
+        .await
+        .json();
+    assert_eq!(timeline, a.timeline);
+
+    // the person can see exactly what the program looked at, with repeated reads folded together
+    let mine = h
+        .call("GET", "/api/submissions", &Harness::browser(&session), None)
+        .await
+        .json();
+    let views: Vec<(String, String)> = mine["submissions"][0]["views"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| {
+            (
+                v["program"].as_str().unwrap().to_owned(),
+                v["what"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert!(views.contains(&("ari".into(), "manifest".into())));
+    assert!(
+        views
+            .iter()
+            .any(|(_, what)| what == &format!("video:{}", a.link))
+    );
+    assert!(
+        views.iter().all(|(program, _)| program == "ari"),
+        "a program that was refused must not appear: {views:?}"
+    );
+    assert_eq!(
+        views
+            .iter()
+            .filter(|(_, what)| what.starts_with("video:"))
+            .count(),
+        1,
+        "two reads of the same video are one view"
+    );
+
+    // hours of a submitted segment cannot be submitted again, but the omitted one still can
+    assert_eq!(
+        h.submit(&token, "other", project, &[&a.link]).await.status,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        h.call("GET", "/api/chain/used", &Harness::bearer(&token), None)
+            .await
+            .json()["used"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let second = h.submit(&token, "other", project, &[&b.link]).await;
+    assert_eq!(
+        second.status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&second.body)
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn withdrawing_deletes_the_recordings_and_frees_the_hours() {
+    let Some((h, dir)) = submission_harness().await else {
+        return;
+    };
+    let session = h.sign_in("rowan").await;
+    let (_, token) = h.new_token(&session, "laptop").await;
+    let genesis = "0".repeat(64);
+    let base = (now() - 7200) / 300 * 300;
+    let a = seg(&genesis, base, 100, true, 1);
+    h.send(
+        &token,
+        json!([{ "project": "p", "slot": base, "seconds": 100 }]),
+    )
+    .await;
+    h.register(&token, &[&a]).await;
+    let id = h.submit(&token, "ari", "p", &[&a.link]).await.json()["id"]
+        .as_i64()
+        .unwrap();
+    h.upload(&token, id, &a).await;
+    h.call(
+        "POST",
+        &format!("/api/submissions/{id}/finalize"),
+        &Harness::bearer(&token),
+        None,
+    )
+    .await;
+    assert!(
+        dir.path()
+            .join(id.to_string())
+            .join(format!("{}.mp4", a.link))
+            .exists()
+    );
+
+    // only the owner, from the site, can withdraw
+    let sam = h.sign_in("sam").await;
+    assert_eq!(
+        h.call(
+            "DELETE",
+            &format!("/api/submissions/{id}"),
+            &Harness::browser(&sam),
+            None
+        )
+        .await
+        .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        h.call(
+            "DELETE",
+            &format!("/api/submissions/{id}"),
+            &[("cookie", format!("pulse_session={session}"))],
+            None
+        )
+        .await
+        .status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        h.call(
+            "DELETE",
+            &format!("/api/submissions/{id}"),
+            &Harness::browser(&session),
+            None
+        )
+        .await
+        .status,
+        StatusCode::NO_CONTENT
+    );
+    assert!(
+        !dir.path().join(id.to_string()).exists(),
+        "the files must be gone"
+    );
+    // the program is told, and can no longer read it
+    let listed = h
+        .call(
+            "GET",
+            "/api/programs/submissions?since=0",
+            &[("authorization", format!("Bearer {ARI_KEY}"))],
+            None,
+        )
+        .await
+        .json();
+    assert_eq!(listed["submissions"][0]["status"], "withdrawn");
+    assert_eq!(
+        h.call(
+            "GET",
+            &format!("/api/programs/submissions/{id}/evidence"),
+            &[("authorization", format!("Bearer {ARI_KEY}"))],
+            None
+        )
+        .await
+        .status,
+        StatusCode::NOT_FOUND
+    );
+    // withdrawing twice is harmless, and the hours can go in again
+    assert_eq!(
+        h.call(
+            "DELETE",
+            &format!("/api/submissions/{id}"),
+            &Harness::browser(&session),
+            None
+        )
+        .await
+        .status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        h.submit(&token, "ari", "p", &[&a.link]).await.status,
+        StatusCode::OK
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn chain_links_must_be_internally_consistent_and_belong_to_one_account() {
+    let Some((h, _dir)) = submission_harness().await else {
+        return;
+    };
+    let rowan = h.sign_in("rowan").await;
+    let (_, token) = h.new_token(&rowan, "laptop").await;
+    let sam = h.sign_in("sam").await;
+    let (_, sam_token) = h.new_token(&sam, "laptop").await;
+    let genesis = "0".repeat(64);
+    let base = (now() - 7200) / 300 * 300;
+    let good = seg(&genesis, base, 100, true, 1);
+
+    // a link whose hash does not match its parts, one that ends in the future, one that is too long
+    let mut forged = good.body.clone();
+    forged["end"] = json!(base + 101);
+    let mut future = seg(&genesis, now() + 3600, 10, true, 2).body;
+    future["previous"] = json!(genesis);
+    let long = seg(&genesis, base, 700, true, 3).body;
+    let reply = h
+        .call(
+            "POST",
+            "/api/chain",
+            &Harness::bearer(&token),
+            Some(json!({ "links": [forged, future, long, good.body] })),
+        )
+        .await
+        .json();
+    assert_eq!(reply["accepted"], 1, "{reply}");
+    let rejected: Vec<i64> = reply["rejected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["index"].as_i64().unwrap())
+        .collect();
+    assert_eq!(rejected, vec![0, 1, 2]);
+
+    // the same link again is fine; claiming someone else's is not
+    assert_eq!(h.register(&token, &[&good]).await["accepted"], 1);
+    let stolen = h.register(&sam_token, &[&good]).await;
+    assert_eq!(
+        (
+            stolen["accepted"].as_i64(),
+            stolen["rejected"].as_array().unwrap().len()
+        ),
+        (Some(0), 1)
+    );
+    // and sam cannot submit rowan's segment
+    h.send(
+        &sam_token,
+        json!([{ "project": "p", "slot": base, "seconds": 10 }]),
+    )
+    .await;
+    let take = h
+        .call(
+            "POST",
+            "/api/submissions",
+            &Harness::bearer(&sam_token),
+            Some(json!({ "program": "ari", "project": "p", "links": [good.link] })),
+        )
+        .await;
+    assert_eq!(take.status, StatusCode::BAD_REQUEST);
+
+    // a server without storage says submissions are off instead of accepting hours it cannot back
+    h.finish().await;
+    let Some(plain) = harness(|_| {}).await else {
+        return;
+    };
+    let session = plain.sign_in("rowan").await;
+    let (_, token) = plain.new_token(&session, "laptop").await;
+    let reply = plain
+        .call(
+            "POST",
+            "/api/submissions",
+            &Harness::bearer(&token),
+            Some(json!({ "program": "ari", "project": "p", "links": [good.link] })),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
+    plain.finish().await;
 }
