@@ -11,6 +11,7 @@ mod submit;
 mod sync;
 mod tail;
 mod terminal;
+mod tray;
 
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
@@ -120,6 +121,9 @@ enum Command {
         /// Address of the server, like https://pulse.example.org
         server: String,
     },
+    /// Show a tray icon with today's time, a link to the dashboard and Quit.
+    /// On Linux it needs a StatusNotifier host, which most desktops provide.
+    Tray,
     /// Disconnect this computer from the server. Time already sent stays there.
     Logout,
     /// Send new time to the server now and check the connection.
@@ -263,6 +267,7 @@ fn main() -> ExitCode {
             },
         ),
         Command::Login { server } => login(&store, &server),
+        Command::Tray => tray::run(&store),
         Command::Logout => logout(&store),
         Command::Sync => sync_now(&store),
         Command::Status => {

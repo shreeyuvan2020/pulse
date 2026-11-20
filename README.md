@@ -32,7 +32,7 @@ cargo build --release
 ./target/release/pulse today                  # today's AI-assisted time
 ```
 
-Other commands: `pulse terminal init` (tracks commands in bash, zsh or fish: add the snippet it prints to your shell config; only the first word of each command is stored, never arguments), `pulse protect <project>`, `pulse unprotect <project>`, `pulse record --seconds 60` (measure recording overhead on this computer), `pulse verify`, `pulse report YYYY-MM-DD`, `pulse today --json`, `pulse events [YYYY-MM-DD]`, `pulse uninstall claude-code`.
+Other commands: `pulse tray` (an icon in the system tray: today's time in the menu, a link to your dashboard, and Quit), `pulse terminal init` (tracks commands in bash, zsh or fish: add the snippet it prints to your shell config; only the first word of each command is stored, never arguments), `pulse protect <project>`, `pulse unprotect <project>`, `pulse record --seconds 60` (measure recording overhead on this computer), `pulse verify`, `pulse report YYYY-MM-DD`, `pulse today --json`, `pulse events [YYYY-MM-DD]`, `pulse uninstall claude-code`.
 
 Data lives in `%LOCALAPPDATA%\pulse` on Windows, `~/Library/Application Support/pulse` on macOS and `~/.local/share/pulse` on Linux (override with `PULSE_HOME`).
 
