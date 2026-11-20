@@ -21,6 +21,15 @@ pub struct Event {
     pub model: Option<String>,
 }
 
+/// The source of events the shell integration writes. Anything else is an
+/// agent.
+pub const TERMINAL_SOURCE: &str = "terminal";
+
+/// Whether a source names a coding agent rather than a terminal.
+pub fn source_is_agent(source: &str) -> bool {
+    source != TERMINAL_SOURCE
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EventKind {
@@ -28,6 +37,11 @@ pub enum EventKind {
     SessionStarted,
     /// The person sent a prompt. This also starts an agent turn.
     PromptSubmitted,
+    /// The person ran a command in a terminal. Only the command's first word
+    /// is ever stored, never its arguments.
+    CommandSubmitted,
+    /// A terminal command finished.
+    CommandEnded,
     /// The person approved or rejected something the agent asked to do.
     ToolDecision,
     /// The agent did something: a tool call, a message, a file edit.
@@ -42,7 +56,10 @@ impl EventKind {
     pub fn is_human(self) -> bool {
         matches!(
             self,
-            EventKind::SessionStarted | EventKind::PromptSubmitted | EventKind::ToolDecision
+            EventKind::SessionStarted
+                | EventKind::PromptSubmitted
+                | EventKind::CommandSubmitted
+                | EventKind::ToolDecision
         )
     }
 }
@@ -66,5 +83,15 @@ mod tests {
             serde_json::to_string(&event).unwrap(),
             r#"{"v":1,"t":1763510400,"source":"claude-code","session":"abc","project":"github.com/hackclub/pulse","kind":"prompt_submitted"}"#
         );
+        let command = Event {
+            kind: EventKind::CommandSubmitted,
+            ..event
+        };
+        assert_eq!(
+            serde_json::to_string(&command).unwrap(),
+            r#"{"v":1,"t":1763510400,"source":"claude-code","session":"abc","project":"github.com/hackclub/pulse","kind":"command_submitted"}"#
+        );
+        assert!(EventKind::CommandSubmitted.is_human());
+        assert!(!EventKind::CommandEnded.is_human());
     }
 }

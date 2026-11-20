@@ -10,6 +10,7 @@ mod store;
 mod submit;
 mod sync;
 mod tail;
+mod terminal;
 
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
@@ -61,6 +62,12 @@ enum Command {
     /// Called by a coding agent's hooks with the hook payload on stdin.
     #[command(hide = true)]
     Hook { adapter: Adapter },
+    /// Terminal tracking: shell hooks record when commands start and end, and
+    /// in which directory. Only the first word of a command is ever stored.
+    Terminal {
+        #[command(subcommand)]
+        command: TerminalCommand,
+    },
     /// Register Pulse's hooks in a coding agent.
     Install {
         adapter: Adapter,
@@ -126,6 +133,43 @@ enum Adapter {
     ClaudeCode,
 }
 
+#[derive(Subcommand)]
+enum TerminalCommand {
+    /// Called by the shell hooks. Kept silent: tracking must never disturb a shell.
+    #[command(hide = true)]
+    Hook {
+        #[arg(long)]
+        kind: HookKind,
+        #[arg(long)]
+        cwd: std::path::PathBuf,
+        #[arg(long)]
+        command: String,
+        #[arg(long)]
+        session: String,
+    },
+    /// Print the snippet to add to this shell's config. Pass the shell to
+    /// print another shell's snippet.
+    Init {
+        #[arg(long)]
+        shell: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum HookKind {
+    Start,
+    End,
+}
+
+fn parse_shell(name: &str) -> Result<terminal::Shell, String> {
+    match name {
+        "bash" => Ok(terminal::Shell::Bash),
+        "zsh" => Ok(terminal::Shell::Zsh),
+        "fish" => Ok(terminal::Shell::Fish),
+        other => Err(format!("{other} is not supported yet (bash, zsh, fish)")),
+    }
+}
+
 pub fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -141,6 +185,25 @@ fn main() -> ExitCode {
             let _ = run_hook(&store, adapter);
             return ExitCode::SUCCESS;
         }
+        Command::Terminal { command } => match command {
+            TerminalCommand::Hook {
+                kind,
+                cwd,
+                command,
+                session,
+            } => {
+                // the shell redirects errors, so nothing is printed either way
+                terminal::hook(
+                    &store,
+                    matches!(kind, HookKind::End),
+                    &cwd,
+                    &command,
+                    &session,
+                )
+                .map_err(|error| error.to_string())
+            }
+            TerminalCommand::Init { shell } => terminal_init(shell.as_deref()),
+        },
         Command::Daemon { no_record } => {
             daemon::run(&store, !no_record).map_err(|error| error.to_string())
         }
@@ -214,6 +277,16 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn terminal_init(shell: Option<&str>) -> Result<(), String> {
+    let picked = shell.map(parse_shell).transpose()?;
+    let shell = picked.or_else(terminal::detect).ok_or(
+        "cannot tell which shell this is; pass it: pulse terminal init --shell bash|zsh|fish",
+    )?;
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    print!("{}", terminal::snippet(exe.as_path(), shell));
+    Ok(())
 }
 
 fn run_hook(store: &Store, adapter: Adapter) -> Result<(), Box<dyn std::error::Error>> {

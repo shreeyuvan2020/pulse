@@ -9,4 +9,4 @@ pub mod chain;
 mod event;
 
 pub use attribution::{Params, ProjectTotals, Report, attribute, engaged_projects};
-pub use event::{Event, EventKind, PROTOCOL_VERSION};
+pub use event::{Event, EventKind, PROTOCOL_VERSION, TERMINAL_SOURCE, source_is_agent};

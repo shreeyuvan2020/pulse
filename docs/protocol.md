@@ -48,6 +48,10 @@ The thresholds are starting values to be tuned against reviewer decisions in a p
 
 While a session is open, the daemon records into `recordings/` in Pulse's data directory: `<start>.mp4` (5 minutes at 1 fps), `<start>.timeline.json` (`[t, change, input]` per second, with `change` the share of 160×90 brightness cells that changed, per thousand) and one line per segment in `chain.jsonl`. Each link is `sha256("pulse.chain.v1" || previous || start || end || sha256(video) || timeline_hash)`, starting from 32 zero bytes; the exact byte layout is in `crates/pulse-core/src/chain.rs`. If the folder grows past its limit, the oldest `<start>.mp4` files are deleted but their timeline sidecars and `chain.jsonl` lines are kept, so links still verify and only the video of that stretch is lost. Projects listed in `recordings/protected.json` (a JSON array of project ids) are skipped when deleting: a segment is protected if any project in its chain line is. A server that receives each link as it is made can later check that a submitted recording existed at that time and was not changed.
 
+## The terminal adapter
+
+`pulse terminal init` prints a snippet for bash, zsh or fish. The shell calls `pulse terminal hook --kind start|end --cwd "$PWD" --command <first word> --session <pid>` when a command starts and when it ends. The hooks are silent and can never break the shell. Terminal commands open and extend engagement windows like prompts, but the `terminal` source never counts as agent time: a dev server left running while you are away does not become "agent work". Command time reaches the server through the same per-slot credits, with `terminal` in the sources list and no prompts counted.
+
 ## Writing an adapter
 
 An adapter maps what a harness writes, either hook payloads or transcript lines, to the event kinds above, reading only the fields it needs. Adapters live in `crates/pulse/src/adapters/` with tests built from real payloads. Prefer hooks, which report in real time, and fall back to transcripts, which need no setup.

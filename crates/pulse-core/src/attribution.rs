@@ -10,7 +10,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use crate::event::{Event, EventKind};
+use crate::event::{Event, EventKind, source_is_agent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Params {
@@ -89,14 +89,19 @@ fn windows(events: &[Event], params: &Params) -> Windows {
                 .push((event.t, event.t + params.review_seconds));
         }
         match event.kind {
-            EventKind::PromptSubmitted => {
+            EventKind::PromptSubmitted | EventKind::CommandSubmitted => {
                 open_turns
                     .entry(session)
                     .or_insert((event.t, event.project.as_str()));
             }
-            EventKind::TurnEnded | EventKind::SessionEnded => {
+            EventKind::TurnEnded | EventKind::SessionEnded | EventKind::CommandEnded => {
                 if let Some((start, project)) = open_turns.remove(&session) {
-                    agent_running.push((start, event.t));
+                    // a command that runs for an hour keeps the project engaged
+                    // for that hour, but a dev server left running is not an
+                    // agent working, so it never counts as agent-only time
+                    if source_is_agent(session.0) {
+                        agent_running.push((start, event.t));
+                    }
                     engaged
                         .entry(project.to_owned())
                         .or_default()
@@ -350,6 +355,47 @@ mod tests {
 
         assert_eq!(credited(&report, "a"), 0);
         assert_eq!(credited(&report, "b"), 200);
+    }
+
+    #[test]
+    fn terminal_commands_count_as_human_time_but_never_as_agent_time() {
+        let events = vec![
+            event(0, "game", EventKind::CommandSubmitted),
+            event(300, "game", EventKind::CommandEnded),
+        ];
+
+        let report = attribute(&events, &inputs(0, 299), 0, 3600, &Params::default());
+
+        // last input is at 295 (0..=299 step 5), so presence ends at 415
+        assert_eq!(credited(&report, "game"), 415);
+        assert_eq!(report.agent_only_seconds, 0);
+        assert_eq!(report.projects["game"].prompts, 0);
+    }
+
+    #[test]
+    fn a_long_command_keeps_the_project_engaged_for_its_whole_run() {
+        let events = vec![
+            event(0, "game", EventKind::CommandSubmitted),
+            event(3600, "game", EventKind::CommandEnded),
+        ];
+        // present the whole hour: input every 100 seconds
+        let inputs: Vec<i64> = (0..=3600).step_by(100).collect();
+
+        let report = attribute(&events, &inputs, 0, 3700, &Params::default());
+
+        // the command end at 3600 is itself activity, so the last presence
+        // window credits through the end of the report
+        assert_eq!(credited(&report, "game"), 3700);
+        assert_eq!(report.agent_only_seconds, 0);
+    }
+
+    #[test]
+    fn an_unended_command_counts_like_any_human_event() {
+        let events = vec![event(0, "game", EventKind::CommandSubmitted)];
+
+        let report = attribute(&events, &inputs(0, 100), 0, 3600, &Params::default());
+
+        assert_eq!(credited(&report, "game"), 220);
     }
 
     #[test]
