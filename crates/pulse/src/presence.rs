@@ -83,7 +83,8 @@ mod x11 {
             let xss = xss::Xss::open().ok()?;
             // SAFETY: a null name opens $DISPLAY; a null result is handled
             let display = unsafe { (xlib.XOpenDisplay)(ptr::null()) };
-            (!display.is_null()).then_some(Connection { xlib, xss, display })
+            // `then`, not `then_some`: a Connection built around a null display would call XCloseDisplay(NULL) when dropped
+            (!display.is_null()).then(|| Connection { xlib, xss, display })
         }
 
         pub fn idle_seconds(&self) -> Option<u64> {

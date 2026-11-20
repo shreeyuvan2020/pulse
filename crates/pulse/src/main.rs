@@ -7,6 +7,7 @@ mod project;
 mod recorder;
 mod report;
 mod store;
+mod sync;
 mod tail;
 
 use std::io::{self, BufRead, Read, Write};
@@ -81,6 +82,17 @@ enum Command {
     },
     /// Print the raw events Pulse stored for a day, exactly as saved.
     Events { date: Option<NaiveDate> },
+    /// Connect this computer to a Pulse server, so your time shows on your
+    /// profile. Make a token on the server's page ("Connect a computer"); you
+    /// are asked to paste it, or it is read from standard input.
+    Login {
+        /// Address of the server, like https://pulse.example.org
+        server: String,
+    },
+    /// Disconnect this computer from the server. Time already sent stays there.
+    Logout,
+    /// Send new time to the server now and check the connection.
+    Sync,
     /// Show where data lives and which agents and signals Pulse can see.
     Status,
 }
@@ -143,6 +155,9 @@ fn main() -> ExitCode {
             }
             Ok(())
         }
+        Command::Login { server } => login(&store, &server),
+        Command::Logout => logout(&store),
+        Command::Sync => sync_now(&store),
         Command::Status => {
             print_status(&store);
             Ok(())
@@ -317,6 +332,19 @@ fn print_status(store: &Store) {
     if let Some(free) = recorder::storage::free_bytes(store.root()) {
         println!("Free disk space: {}", recorder::storage::format_bytes(free));
     }
+    match sync::load(store.root()) {
+        None => println!(
+            "Server: not connected (run `pulse login <server>` to show your time on a profile)"
+        ),
+        Some(connection) => println!(
+            "Server: {} (last upload {})",
+            connection.server,
+            match sync::last_upload(store.root()) {
+                Some(at) => format!("{} ago", report::format_duration(now() - at)),
+                None => "never".into(),
+            }
+        ),
+    }
     let codex = paths::codex_dir().map(|dir| dir.join("sessions"));
     println!(
         "Codex: {}",
@@ -392,6 +420,56 @@ fn protect(store: &Store, project: &str, on: bool) -> Result<(), String> {
             println!("{project}: its old recordings can be deleted again when space is needed.")
         }
         (false, false) => println!("{project} was not protected."),
+    }
+    Ok(())
+}
+
+fn login(store: &Store, server: &str) -> Result<(), String> {
+    let server = sync::normalize_server(server)?;
+    eprint!("Paste the token from {server}: ");
+    io::stderr().flush().map_err(|error| error.to_string())?;
+    let mut token = String::new();
+    io::stdin()
+        .lock()
+        .read_line(&mut token)
+        .map_err(|error| error.to_string())?;
+    let connection = sync::Connection {
+        server,
+        token: token.trim().to_owned(),
+    };
+    if !connection.token.starts_with("pulse_") {
+        return Err("that does not look like a Pulse token (they start with pulse_)".into());
+    }
+    sync::verify(&connection).map_err(|error| error.to_string())?;
+    // a new account starts from scratch, so time that went to another one is not copied over
+    if sync::load(store.root()).is_some_and(|old| old != connection) {
+        sync::remove(store.root()).map_err(|error| error.to_string())?;
+    }
+    sync::save(store.root(), &connection).map_err(|error| error.to_string())?;
+    println!(
+        "Connected. The running daemon picks this up within a minute; `pulse sync` sends time right away."
+    );
+    Ok(())
+}
+
+fn logout(store: &Store) -> Result<(), String> {
+    match sync::remove(store.root()).map_err(|error| error.to_string())? {
+        true => println!(
+            "Disconnected. Time already sent stays on the server; revoke this computer there to be sure."
+        ),
+        false => println!("This computer was not connected."),
+    }
+    Ok(())
+}
+
+fn sync_now(store: &Store) -> Result<(), String> {
+    let connection =
+        sync::load(store.root()).ok_or("not connected, run `pulse login <server>` first")?;
+    let outcome = sync::run_once(store.root(), &connection, now(), true)
+        .map_err(|error| error.to_string())?;
+    println!("Sent {} entries to {}.", outcome.sent, connection.server);
+    for reason in outcome.rejected {
+        println!("  the server refused one: {reason}");
     }
     Ok(())
 }

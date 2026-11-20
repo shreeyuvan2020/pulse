@@ -47,7 +47,9 @@ export PULSE_DEV_LOGIN=1     # sign in as any name; only works when PULSE_BASE_U
 cargo run -p pulse-server
 ```
 
-Tests need a Postgres they may create databases in: `PULSE_TEST_DATABASE_URL=postgres://user@localhost/postgres cargo test -p pulse-server`. The desktop client does not send time to the server yet.
+Tests need a Postgres they may create databases in: `PULSE_TEST_DATABASE_URL=postgres://user@localhost/postgres cargo test -p pulse-server`. 
+
+To send your time: make a token on your profile page ("Connect a computer"), run `pulse login <server>` and paste it, then keep `pulse daemon` running. It uploads credited time every minute (per project and 5-minute slot, with prompt counts and tool names; never recordings, prompts or paths). `pulse sync` sends right away, `pulse logout` disconnects. Plain `http://` is only accepted for localhost.
 
 ## Development
 

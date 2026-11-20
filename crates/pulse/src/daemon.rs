@@ -18,7 +18,7 @@ use crate::presence::IdleTimer;
 use crate::recorder::Recorder;
 use crate::store::Store;
 use crate::tail::Tailer;
-use crate::{now, paths, project, settings};
+use crate::{now, paths, project, settings, sync};
 
 pub fn run(store: &Store, record: bool) -> io::Result<()> {
     std::fs::create_dir_all(store.root())?;
@@ -50,6 +50,7 @@ pub fn run(store: &Store, record: bool) -> io::Result<()> {
     let stop = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&stop);
     ctrlc::set_handler(move || flag.store(true, Ordering::SeqCst)).map_err(io::Error::other)?;
+    let uploader = sync::spawn(store.root().to_path_buf(), Arc::clone(&stop));
     let mut tailer = Tailer::new(
         store,
         None,
@@ -101,10 +102,7 @@ pub fn run(store: &Store, record: bool) -> io::Result<()> {
                     }
                 } else {
                     let list: Vec<&str> = engaged.iter().map(String::as_str).collect();
-                    eprintln!(
-                        "pulse: agent session open for {}, recording",
-                        list.join(", ")
-                    );
+                    eprintln!("pulse: agent session open for {}", list.join(", "));
                 }
                 active = engaged;
             }
@@ -125,6 +123,7 @@ pub fn run(store: &Store, record: bool) -> io::Result<()> {
     if let Some(recorder) = &mut recorder {
         recorder.finish()?;
     }
+    let _ = uploader.join();
     eprintln!("pulse: stopped");
     Ok(())
 }
