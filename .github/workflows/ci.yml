@@ -6,6 +6,7 @@ on:
   pull_request:
 
 jobs:
+  # the desktop tracker runs on all three operating systems
   test:
     strategy:
       fail-fast: false
@@ -18,14 +19,41 @@ jobs:
         with:
           components: clippy, rustfmt
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo clippy --workspace --exclude pulse-server --all-targets -- -D warnings
+      - run: cargo test --workspace --exclude pulse-server
       - name: Recording smoke test
         if: matrix.os == 'windows-latest'
         # hosted runners may have no screen to record, so this only reports
         continue-on-error: true
         shell: bash
         run: |
-          cargo run --release -- record --seconds 8 --out smoke 2>&1 | tee smoke.log
+          cargo run --release -p pulse -- record --seconds 8 --out smoke 2>&1 | tee smoke.log
           grep -q "Frames: [1-9]" smoke.log
-          cargo run --release -- verify smoke
+          cargo run --release -p pulse -- verify smoke
+
+  # the server runs on Linux only, against a real Postgres
+  server:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: pulse
+          POSTGRES_PASSWORD: pulse
+          POSTGRES_DB: pulse_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pulse"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PULSE_TEST_DATABASE_URL: postgres://pulse:pulse@localhost:5432/pulse_dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy -p pulse-server --all-targets -- -D warnings
+      - run: cargo test -p pulse-server

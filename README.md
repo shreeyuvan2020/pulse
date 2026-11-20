@@ -36,6 +36,19 @@ Other commands: `pulse protect <project>`, `pulse unprotect <project>`, `pulse r
 
 Data lives in `%LOCALAPPDATA%\pulse` on Windows, `~/Library/Application Support/pulse` on macOS and `~/.local/share/pulse` on Linux (override with `PULSE_HOME`).
 
+## Server
+
+`server/` is the Pulse server: accounts (Hack Club Auth), public-by-default profiles, projects, per-computer API tokens, and a dashboard that updates live (server-sent events) as time is logged. It stores only credited time per 5-minute slot, never recordings, and never lets one person log more than 300 seconds in a 300-second slot, whatever the clients send. Project names stay hidden until the owner shows them.
+
+```sh
+export DATABASE_URL=postgres://user@localhost/pulse PULSE_BASE_URL=http://localhost:8080
+export PULSE_DEV_LOGIN=1     # sign in as any name; only works when PULSE_BASE_URL is local
+# or real sign-in: HCA_CLIENT_ID, HCA_CLIENT_SECRET (HCA_BASE_URL defaults to the staging instance, https://hca.dinosaurbbq.org)
+cargo run -p pulse-server
+```
+
+Tests need a Postgres they may create databases in: `PULSE_TEST_DATABASE_URL=postgres://user@localhost/postgres cargo test -p pulse-server`. The desktop client does not send time to the server yet.
+
 ## Development
 
 ```sh
