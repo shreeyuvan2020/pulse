@@ -20,22 +20,35 @@ use crate::store::Store;
 use crate::tail::Tailer;
 use crate::{now, paths, project, settings, sync};
 
-/// How long recording keeps going after the last sign of activity before it
-/// pauses: 120 seconds of no input and no session event stops it, and the
-/// next input or event resumes it. The screen is recorded only while you or
-/// the agent are actually doing something.
+/// How long recording keeps going after the last sign of you doing something
+/// before it pauses: 120 seconds of no input and no human event stops it, and
+/// the next input or action resumes it. The screen is recorded only while the
+/// person is active; the agent working by itself does not keep it alive.
 const RECORD_IDLE_SECONDS: i64 = 120;
 
+/// The time of the most recent event the person made: a prompt, a terminal
+/// command, a tool decision or a session start. Agent events (the agent
+/// replying, doing something or finishing) do not count, because the recording
+/// follows the person, not the agent.
+fn last_human_event(events: &[pulse_core::Event]) -> i64 {
+    events
+        .iter()
+        .filter(|event| event.kind.is_human())
+        .map(|event| event.t)
+        .max()
+        .unwrap_or(0)
+}
+
 /// Whether the recorder should run for this second: a project is engaged and
-/// something happened recently. "Something" is keyboard or mouse input, or
-/// any session event (a command started, the agent did something). A terminal
-/// command counts through its event, so typing in the terminal starts the
-/// recording even where the OS idle timer is unavailable.
-pub fn should_record(engaged: bool, now: i64, last_input: i64, last_event: i64) -> bool {
+/// the person did something recently. "Something" is keyboard or mouse input,
+/// or a human event (a command started, a prompt sent, a tool approved). A
+/// terminal command counts through its event, so typing in the terminal
+/// starts the recording even where the OS idle timer is unavailable.
+pub fn should_record(engaged: bool, now: i64, last_input: i64, last_human: i64) -> bool {
     if !engaged {
         return false;
     }
-    let since_activity = (now - last_input).min(now - last_event);
+    let since_activity = (now - last_input).min(now - last_human);
     since_activity <= RECORD_IDLE_SECONDS
 }
 
@@ -77,7 +90,7 @@ pub fn run(store: &Store, record: bool) -> io::Result<()> {
     );
     let params = Params::default();
     let mut last_input = 0;
-    let mut last_event = 0;
+    let mut last_human = 0;
     let mut active = BTreeSet::new();
     let mut recording = false;
     eprintln!("pulse: tracking, data in {}", store.root().display());
@@ -115,7 +128,7 @@ pub fn run(store: &Store, record: bool) -> io::Result<()> {
             }
 
             let events = store.events(now - 3600, now + 1);
-            last_event = events.iter().map(|event| event.t).max().unwrap_or(0);
+            last_human = last_human_event(&events);
             let engaged = engaged_projects(&events, now, &params);
             if engaged != active {
                 if engaged.is_empty() {
@@ -129,7 +142,7 @@ pub fn run(store: &Store, record: bool) -> io::Result<()> {
         }
 
         // the screen is only recorded while something is actually happening
-        let want = should_record(!active.is_empty(), now, last_input, last_event);
+        let want = should_record(!active.is_empty(), now, last_input, last_human);
         if want != recording {
             recording = want;
             if recording {
@@ -177,21 +190,52 @@ fn claude_projects_without_hooks() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::should_record;
+    use super::{last_human_event, should_record};
+    use pulse_core::{Event, EventKind, PROTOCOL_VERSION};
+
+    fn event(t: i64, kind: EventKind) -> Event {
+        Event {
+            v: PROTOCOL_VERSION,
+            t,
+            source: "claude-code".into(),
+            session: "s".into(),
+            project: "p".into(),
+            kind,
+            model: None,
+        }
+    }
 
     #[test]
-    fn recording_needs_an_engaged_project_and_recent_activity() {
+    fn recording_needs_an_engaged_project_and_recent_human_activity() {
         let now = 1_795_200_000;
         // not engaged: never record
         assert!(!should_record(false, now, now, now));
-        // engaged with fresh input, or a fresh event with no input
+        // engaged with fresh input, or a fresh human event with no input
         assert!(should_record(true, now, now, 0));
         assert!(should_record(true, now, now - 121, now));
         // exactly at the boundary still counts
         assert!(should_record(true, now, now - 120, 0));
         // both quiet for too long: pause
         assert!(!should_record(true, now, now - 121, now - 121));
-        // no input and no event ever seen
+        // no input and no human event ever seen
         assert!(!should_record(true, now, 0, 0));
+    }
+
+    #[test]
+    fn only_person_events_count_as_activity_for_recording() {
+        let events = [
+            event(100, EventKind::AgentActivity),
+            event(200, EventKind::TurnEnded),
+            event(300, EventKind::PromptSubmitted),
+            event(400, EventKind::AgentActivity),
+        ];
+        // the agent's later events are ignored; the last thing the person did was at 300
+        assert_eq!(last_human_event(&events), 300);
+        // agent work alone is no activity at all
+        let agent_only = [
+            event(100, EventKind::AgentActivity),
+            event(200, EventKind::TurnEnded),
+        ];
+        assert_eq!(last_human_event(&agent_only), 0);
     }
 }
