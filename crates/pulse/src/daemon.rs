@@ -20,6 +20,25 @@ use crate::store::Store;
 use crate::tail::Tailer;
 use crate::{now, paths, project, settings, sync};
 
+/// How long recording keeps going after the last sign of activity before it
+/// pauses: 120 seconds of no input and no session event stops it, and the
+/// next input or event resumes it. The screen is recorded only while you or
+/// the agent are actually doing something.
+const RECORD_IDLE_SECONDS: i64 = 120;
+
+/// Whether the recorder should run for this second: a project is engaged and
+/// something happened recently. "Something" is keyboard or mouse input, or
+/// any session event (a command started, the agent did something). A terminal
+/// command counts through its event, so typing in the terminal starts the
+/// recording even where the OS idle timer is unavailable.
+pub fn should_record(engaged: bool, now: i64, last_input: i64, last_event: i64) -> bool {
+    if !engaged {
+        return false;
+    }
+    let since_activity = (now - last_input).min(now - last_event);
+    since_activity <= RECORD_IDLE_SECONDS
+}
+
 pub fn run(store: &Store, record: bool) -> io::Result<()> {
     std::fs::create_dir_all(store.root())?;
     let lock = File::create(store.root().join("daemon.lock"))?;
@@ -58,7 +77,9 @@ pub fn run(store: &Store, record: bool) -> io::Result<()> {
     );
     let params = Params::default();
     let mut last_input = 0;
+    let mut last_event = 0;
     let mut active = BTreeSet::new();
+    let mut recording = false;
     eprintln!("pulse: tracking, data in {}", store.root().display());
 
     for tick in 0u64.. {
@@ -93,22 +114,34 @@ pub fn run(store: &Store, record: bool) -> io::Result<()> {
                 eprintln!("pulse: reading transcripts failed: {error}");
             }
 
-            let engaged = engaged_projects(&store.events(now - 3600, now + 1), now, &params);
+            let events = store.events(now - 3600, now + 1);
+            last_event = events.iter().map(|event| event.t).max().unwrap_or(0);
+            let engaged = engaged_projects(&events, now, &params);
             if engaged != active {
                 if engaged.is_empty() {
-                    eprintln!("pulse: agent session closed, recording stopped");
-                    if let Some(recorder) = &mut recorder {
-                        recorder.finish()?;
-                    }
+                    eprintln!("pulse: session closed");
                 } else {
                     let list: Vec<&str> = engaged.iter().map(String::as_str).collect();
-                    eprintln!("pulse: agent session open for {}", list.join(", "));
+                    eprintln!("pulse: session open for {}", list.join(", "));
                 }
                 active = engaged;
             }
         }
 
-        if !active.is_empty()
+        // the screen is only recorded while something is actually happening
+        let want = should_record(!active.is_empty(), now, last_input, last_event);
+        if want != recording {
+            recording = want;
+            if recording {
+                eprintln!("pulse: activity detected, recording");
+            } else {
+                eprintln!("pulse: nothing happening, recording paused");
+                if let Some(recorder) = &mut recorder {
+                    recorder.finish()?;
+                }
+            }
+        }
+        if recording
             && let Some(recorder) = &mut recorder
             && let Err(error) = recorder.record(now, input, &active)
         {
@@ -140,4 +173,25 @@ fn claude_projects_without_hooks() -> Option<PathBuf> {
     let hooks_installed = settings::read(&dir.join("settings.json"))
         .is_ok_and(|settings| crate::install::installed(&settings));
     (!hooks_installed).then(|| dir.join("projects"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_record;
+
+    #[test]
+    fn recording_needs_an_engaged_project_and_recent_activity() {
+        let now = 1_795_200_000;
+        // not engaged: never record
+        assert!(!should_record(false, now, now, now));
+        // engaged with fresh input, or a fresh event with no input
+        assert!(should_record(true, now, now, 0));
+        assert!(should_record(true, now, now - 121, now));
+        // exactly at the boundary still counts
+        assert!(should_record(true, now, now - 120, 0));
+        // both quiet for too long: pause
+        assert!(!should_record(true, now, now - 121, now - 121));
+        // no input and no event ever seen
+        assert!(!should_record(true, now, 0, 0));
+    }
 }

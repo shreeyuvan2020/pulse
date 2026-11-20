@@ -12,7 +12,7 @@ Pulse counts the time **you** spend in the loop with a coding agent: prompting, 
 - The **OS idle timer** tells Pulse whether you are at the computer. It is a single "seconds since last input" number: Pulse never sees which keys you press.
 - **Attribution** credits a second to a project when you are present and its agent session is open, giving the second to the project you touched most recently, so parallel agents never multiply your hours. The rules are in [docs/protocol.md](docs/protocol.md#attribution).
 
-- The **recorder** captures one frame per second while an agent session is open, scaled to fit 1280×720, as 5-minute H.264 MP4 segments. Each segment gets a per-second activity timeline (screen change score and an input yes/no) and a link in a SHA-256 hash chain (`pulse verify` checks it). `pulse daemon --no-record` tracks time without recording, but those hours cannot be verified.
+- The **recorder** captures one frame per second while a session is open and something is happening (you are typing, or the agent is working), scaled to fit 1280×720, as 5-minute H.264 MP4 segments. It pauses after two minutes of silence and resumes when you or the agent act again. Each segment gets a per-second activity timeline (screen change score and an input yes/no) and a link in a SHA-256 hash chain (`pulse verify` checks it). `pulse daemon --no-record` tracks time without recording, but those hours cannot be verified.
 
 - **Video codec:** Pulse does not build or ship H.264 itself. On first recording it downloads Cisco's prebuilt OpenH264 2.7.0 from `ciscobinary.openh264.org` into its data folder and loads it only if its SHA-256 matches a known Cisco release. OpenH264 Video Codec provided by Cisco Systems, Inc.
 

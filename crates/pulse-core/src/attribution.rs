@@ -399,6 +399,17 @@ mod tests {
     }
 
     #[test]
+    fn a_terminal_command_opens_the_recording_window() {
+        let events = vec![event(0, "game", EventKind::CommandSubmitted)];
+        let params = Params::default();
+
+        // the command itself engages the project, so typing in the terminal
+        // starts the recording
+        assert!(engaged_projects(&events, 599, &params).contains("game"));
+        assert!(engaged_projects(&events, 600, &params).is_empty());
+    }
+
+    #[test]
     fn opening_an_agent_starts_a_session_for_the_review_window() {
         let events = vec![event(0, "game", EventKind::SessionStarted)];
         let params = Params::default();
