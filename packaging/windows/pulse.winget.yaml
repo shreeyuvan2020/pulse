@@ -1,0 +1,20 @@
+# Winget portable manifest. The InstallerSha256 must be filled in from the
+# first release; until then this is a template.
+PackageIdentifier: HackClub.Pulse
+PackageVersion: 0.1.0
+PackageName: Pulse
+Publisher: Hack Club
+License: AGPL-3.0-only
+ShortDescription: Passive time tracking for building with AI coding agents
+PackageUrl: https://github.com/shreeyuvan2020/pulse
+Tags:
+  - time-tracking
+  - ai
+  - productivity
+Installers:
+  - Architecture: x64
+    InstallerType: portable
+    InstallerUrl: https://github.com/shreeyuvan2020/pulse/releases/download/v0.1.0/pulse-windows-x86_64.zip
+    InstallerSha256: REPLACE_WITH_THE_RELEASE_SHA256
+ManifestType: singleton
+ManifestVersion: 1.9.0

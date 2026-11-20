@@ -1,0 +1,21 @@
+{
+    "version": "0.1.0",
+    "description": "Passive time tracking for building with AI coding agents",
+    "homepage": "https://github.com/shreeyuvan2020/pulse",
+    "license": "AGPL-3.0-only",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/shreeyuvan2020/pulse/releases/download/v0.1.0/pulse-windows-x86_64.zip",
+            "hash": "REPLACE_WITH_THE_RELEASE_SHA256"
+        }
+    },
+    "bin": "pulse.exe",
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/shreeyuvan2020/pulse/releases/download/v$version/pulse-windows-x86_64.zip"
+            }
+        }
+    }
+}

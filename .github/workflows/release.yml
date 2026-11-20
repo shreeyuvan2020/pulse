@@ -1,0 +1,86 @@
+name: Release
+
+# Builds installable artifacts for every OS. Push a v* tag to create the
+# GitHub Release; workflow_dispatch also runs the builds without releasing.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release -p pulse
+      - name: Pack tarball
+        run: tar czf target/release/pulse-linux-amd64.tar.gz -C target/release pulse
+      - name: Build the .deb
+        run: |
+          cargo install cargo-deb --locked
+          cd crates/pulse && cargo deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            target/release/pulse-linux-amd64.tar.gz
+            target/debian/pulse_*_amd64.deb
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build both architectures
+        run: |
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
+          cargo build --release -p pulse --target x86_64-apple-darwin
+          cargo build --release -p pulse --target aarch64-apple-darwin
+          mkdir -p target/release
+          lipo -create \
+            target/x86_64-apple-darwin/release/pulse \
+            target/aarch64-apple-darwin/release/pulse \
+            -output target/release/pulse-universal
+      - name: Bundle Pulse.app
+        run: scripts/build-macos-app.sh target/release/pulse-universal target/Pulse.app
+      - name: Pack tarball
+        run: tar czf pulse-macos-universal.tar.gz -C target Pulse.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: pulse-macos-universal.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release -p pulse
+      - name: Pack zip
+        shell: pwsh
+        run: Compress-Archive -Path target\release\pulse.exe -DestinationPath pulse-windows-x86_64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: pulse-windows-x86_64.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

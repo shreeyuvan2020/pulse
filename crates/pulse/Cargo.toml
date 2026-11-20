@@ -52,3 +52,17 @@ x11-dl = "2"
 
 [dev-dependencies]
 tempfile = "3"
+
+[package.metadata.deb]
+name = "pulse"
+maintainer = "Hack Club <hi@hackclub.com>"
+copyright = "2026, Hack Club"
+license-file = "../../LICENSE"
+extended-description = "Passive time tracking for building with AI coding agents. Records the screen at one frame per second while a coding agent session is open, tracks credited time locally, and can send it to a Pulse server. Recordings never leave the computer unless submitted."
+section = "utils"
+priority = "optional"
+depends = "libc6, libgcc-s1, libx11-6, libxkbcommon0"
+assets = [
+    ["assets/tray.png", "usr/share/icons/hicolor/64x64/apps/pulse.png", "644"],
+    ["target/release/pulse", "usr/bin/pulse", "755"],
+]

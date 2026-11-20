@@ -31,7 +31,7 @@ use crate::store::Store;
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -181,9 +181,34 @@ pub fn now() -> i64 {
 }
 
 fn main() -> ExitCode {
+    // `pulse status | head` must not panic when the reader goes away: unix
+    // tools stop quietly when their output pipe closes
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if info.to_string().contains("Broken pipe") {
+            std::process::exit(0);
+        }
+        default_hook(info);
+    }));
     let cli = Cli::parse();
     let store = Store::new(paths::data_dir());
-    let result = match cli.command {
+    let Some(command) = cli.command else {
+        // double-clicking Pulse.app runs the binary with no arguments: the
+        // tray is the app. A bare `pulse` in a terminal still shows help.
+        if is_app_bundle_path(&std::env::current_exe().unwrap_or_default()) {
+            return match tray::run(&store) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(message) => {
+                    eprintln!("pulse: {message}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        use clap::CommandFactory;
+        let _ = Cli::command().print_help();
+        return ExitCode::SUCCESS;
+    };
+    let result = match command {
         Command::Hook { adapter } => {
             // a hook must never slow down or break the agent, so failures stay silent
             let _ = run_hook(&store, adapter);
@@ -292,6 +317,12 @@ fn terminal_init(shell: Option<&str>) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
     print!("{}", terminal::snippet(exe.as_path(), shell));
     Ok(())
+}
+
+/// Whether this binary lives inside a macOS app bundle. That decides what
+/// running it with no arguments means.
+pub fn is_app_bundle_path(exe: &Path) -> bool {
+    exe.to_string_lossy().contains(".app/Contents/MacOS/")
 }
 
 fn run_hook(store: &Store, adapter: Adapter) -> Result<(), Box<dyn std::error::Error>> {
@@ -594,4 +625,22 @@ fn sync_now(store: &Store) -> Result<(), String> {
         println!("  the server refused one: {reason}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_app_bundle_path;
+    use std::path::Path;
+
+    #[test]
+    fn only_paths_inside_an_app_bundle_start_the_tray_with_no_arguments() {
+        assert!(is_app_bundle_path(Path::new(
+            "/Applications/Pulse.app/Contents/MacOS/pulse"
+        )));
+        assert!(!is_app_bundle_path(Path::new("/usr/local/bin/pulse")));
+        assert!(!is_app_bundle_path(Path::new(
+            "/home/u/not-an-app/Contents/MacOS/pulse"
+        )));
+        assert!(!is_app_bundle_path(Path::new("pulse")));
+    }
 }

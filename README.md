@@ -64,6 +64,14 @@ Tests need a Postgres they may create databases in: `PULSE_TEST_DATABASE_URL=pos
 
 To send your time: make a token on your profile page ("Connect a computer"), run `pulse login <server>` and paste it, then keep `pulse daemon` running. It uploads credited time every minute (per project and 5-minute slot, with prompt counts and tool names; never recordings, prompts or paths). `pulse sync` sends right away, `pulse logout` disconnects. Plain `http://` is only accepted for localhost.
 
+## Installing
+
+- **Linux:** `curl -fsSL https://raw.githubusercontent.com/shreeyuvan2020/pulse/main/packaging/install.sh | bash` installs the latest release into `~/.local/bin`. Debian and Ubuntu can use the `.deb` from the release page; Arch users can build `packaging/aur/pulse-bin` from the AUR.
+- **macOS:** the same one-liner installs `Pulse.app` into `~/Applications` (move it to `/Applications` to keep it in the menu bar every day), or `brew install pulse` from a tap of `packaging/homebrew/pulse.rb`.
+- **Windows:** the release zip on the release page, or `winget install HackClub.Pulse` / `scoop install pulse` once the manifests in `packaging/windows` are published with their hashes.
+
+Pushing a `v*` tag builds the tarball, the `.deb`, `Pulse.app` and the Windows zip through `.github/workflows/release.yml` and attaches them to a GitHub Release. The binaries are not signed yet: Windows SmartScreen and macOS Gatekeeper will warn until SignPath signing and Apple notarization are set up.
+
 ## Development
 
 ```sh
