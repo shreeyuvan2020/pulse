@@ -53,3 +53,11 @@ input[type="text"] { font: inherit; background: var(--bg); color: var(--text); b
 .error { color: var(--accent); }
 footer { padding: 48px 0; }
 @media (max-width: 560px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+select { font: inherit; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; max-width: 100%; }
+.status { font-size: 13px; padding: 2px 10px; border-radius: 99px; border: 1px solid var(--line); }
+.status.submitted { color: var(--live); border-color: var(--live); }
+.status.withdrawn { color: var(--muted); }
+.looks { margin-top: 8px; }
+.project .stats { margin-top: 12px; }
+nav a { text-decoration: none; }
+nav a:hover { color: var(--text); }

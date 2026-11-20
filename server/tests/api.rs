@@ -1846,3 +1846,62 @@ async fn chain_links_must_be_internally_consistent_and_belong_to_one_account() {
     assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
     plain.finish().await;
 }
+
+#[tokio::test]
+async fn the_website_sees_how_much_was_recorded_and_how_much_is_already_submitted() {
+    let Some((h, _dir)) = submission_harness().await else {
+        return;
+    };
+    let session = h.sign_in("rowan").await;
+    let (_, token) = h.new_token(&session, "laptop").await;
+    let genesis = "0".repeat(64);
+    let base = (now() - 1800) / 300 * 300;
+    let a = seg(&genesis, base, 100, true, 1);
+    let b = seg(&a.link, base + 100, 50, true, 2);
+    h.register(&token, &[&a, &b]).await;
+    h.send(
+        &token,
+        json!([{ "project": "p", "slot": base, "seconds": 100 }]),
+    )
+    .await;
+
+    // needs a signed-in browser, like the page itself
+    assert_eq!(
+        h.call("GET", "/api/recordings", &Harness::bearer(&token), None)
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    let before = h
+        .call("GET", "/api/recordings", &Harness::browser(&session), None)
+        .await
+        .json();
+    assert_eq!(
+        (
+            before["seconds"].as_i64(),
+            before["submitted_seconds"].as_i64()
+        ),
+        (Some(150), Some(0))
+    );
+    assert_eq!(before["days"][0]["segments"], 2);
+
+    let id = h.submit(&token, "ari", "p", &[&a.link]).await.json()["id"]
+        .as_i64()
+        .unwrap();
+    h.upload(&token, id, &a).await;
+    h.call(
+        "POST",
+        &format!("/api/submissions/{id}/finalize"),
+        &Harness::bearer(&token),
+        None,
+    )
+    .await;
+
+    let after = h
+        .call("GET", "/api/recordings", &Harness::browser(&session), None)
+        .await
+        .json();
+    assert_eq!(after["submitted_seconds"], 100);
+    assert_eq!(after["seconds"], 150);
+    h.finish().await;
+}

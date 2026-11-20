@@ -41,6 +41,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/chain", post(upload_chain))
         .route("/api/chain/used", get(used_links))
+        .route("/api/recordings", get(recordings_summary))
         .route("/api/programs", get(list_programs))
         .route("/api/submissions", get(list_mine).post(create))
         .route("/api/submissions/{id}", delete(withdraw))
@@ -170,6 +171,45 @@ async fn used_links(
     .fetch_all(&state.db)
     .await?;
     Ok(Json(json!({ "used": used })))
+}
+
+/// What the server holds of a person's recordings, by UTC day, for the
+/// website's submit page: how much was committed and how much of it is
+/// already part of a submitted submission. The server never knows which
+/// project a segment belongs to (the computer only sends hashes), so this is
+/// not split by project.
+async fn recordings_summary(
+    State(state): State<AppState>,
+    SessionUser(user): SessionUser,
+) -> Result<Json<Value>, AppError> {
+    let rows = sqlx::query(
+        "select cl.start_at / 86400 as day, count(*) as segments, \
+         sum(cl.end_at - cl.start_at)::bigint as seconds, \
+         sum(case when exists (select 1 from submission_segments ss join submissions s on s.id = ss.submission_id \
+             where ss.link = cl.link and not ss.omitted and s.status = 'submitted') \
+             then cl.end_at - cl.start_at else 0 end)::bigint as submitted_seconds \
+         from chain_links cl where cl.user_id = $1 group by 1 order by 1 desc limit 60",
+    )
+    .bind(user.id)
+    .fetch_all(&state.db)
+    .await?;
+    let days: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            json!({
+                "date": crate::stats::date_string(row.get::<i64, _>("day")),
+                "segments": row.get::<i64, _>("segments"),
+                "seconds": row.get::<i64, _>("seconds"),
+                "submitted_seconds": row.get::<i64, _>("submitted_seconds"),
+            })
+        })
+        .collect();
+    let sum = |key: &str| rows.iter().map(|row| row.get::<i64, _>(key)).sum::<i64>();
+    Ok(Json(json!({
+        "seconds": sum("seconds"),
+        "submitted_seconds": sum("submitted_seconds"),
+        "days": days,
+    })))
 }
 
 async fn list_programs(State(state): State<AppState>) -> Json<Value> {
@@ -635,7 +675,8 @@ async fn list_mine(
     SessionUser(user): SessionUser,
 ) -> Result<Json<Value>, AppError> {
     let rows = sqlx::query(
-        "select s.id, s.program, s.status, s.submitted_at, s.recorded_seconds, s.active_seconds, p.key \
+        "select s.id, s.program, s.status, s.submitted_at, s.recorded_seconds, s.active_seconds, \
+         s.omitted_seconds, s.claimed_seconds, p.key \
          from submissions s join projects p on p.id = s.project_id \
          where s.user_id = $1 and s.status <> 'uploading' order by s.id desc limit 50",
     )
@@ -665,6 +706,8 @@ async fn list_mine(
                 "submitted_at": row.get::<Option<i64>, _>("submitted_at"),
                 "recorded_seconds": row.get::<Option<i64>, _>("recorded_seconds"),
                 "active_seconds": row.get::<Option<i64>, _>("active_seconds"),
+                "omitted_seconds": row.get::<Option<i64>, _>("omitted_seconds"),
+                "claimed_seconds": row.get::<Option<i64>, _>("claimed_seconds"),
                 "views": seen,
             })
         })

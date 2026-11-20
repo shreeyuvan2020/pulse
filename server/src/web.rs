@@ -16,6 +16,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(|| async { Html(PAGE) }))
         .route("/u/{username}", get(|| async { Html(PAGE) }))
+        .route("/submissions", get(|| async { Html(PAGE) }))
         .route(
             "/app.js",
             get(|| async {
