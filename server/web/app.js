@@ -38,6 +38,14 @@ function duration(seconds) {
   return `${seconds}s`;
 }
 
+function ago(unixSeconds) {
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - unixSeconds));
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
 function renderTop(me) {
   const nav = el("nav");
   if (me.user) {
@@ -85,8 +93,11 @@ function chart(days) {
 }
 
 function projectRow(project, total, isOwner, reload) {
+  // the server only sends a link for an exact GitHub repository address
+  const linkable = project.url && project.url.startsWith("https://github.com/");
   const label = project.name
-    ? el("span", { class: "name" }, project.name)
+    ? el("span", { class: "name" },
+        linkable ? el("a", { href: project.url, target: "_blank", rel: "noopener noreferrer" }, project.name) : project.name)
     : el("span", { class: "name private" }, "Private project");
   const share = el("div", { class: "bar" });
   share.style.width = `${Math.max(2, (project.seconds / Math.max(total, 1)) * 100)}%`;
@@ -100,7 +111,10 @@ function projectRow(project, total, isOwner, reload) {
         },
       }), "show name")
     : null;
-  return el("div", { class: "project" }, el("div", { class: "line" }, label, toggle, el("span", { class: "time" }, duration(project.seconds))), share);
+  const pushed = project.pushes > 0 && project.last_push_at
+    ? el("div", { class: "note" }, `${project.pushes} ${project.pushes === 1 ? "push" : "pushes"} to GitHub · last ${ago(project.last_push_at)}`)
+    : null;
+  return el("div", { class: "project" }, el("div", { class: "line" }, label, toggle, el("span", { class: "time" }, duration(project.seconds))), pushed, share);
 }
 
 function renderProfile(data, reload) {
@@ -129,6 +143,27 @@ function renderProfile(data, reload) {
     section.append(el("h2", {}, "Built with"), el("div", { class: "chips" }, tools.map((tool) => el("span", { class: "chip" }, tool))));
   }
   return section;
+}
+
+function githubSection(me) {
+  const { user, github } = me;
+  const body = [];
+  if (user.github_login) {
+    body.push(
+      el("div", { class: "row" },
+        el("span", { class: "name" }, `Connected as ${user.github_login}`),
+        el("button", { onclick: async () => { await api("/api/github", { method: "DELETE" }); location.reload(); } }, "Disconnect")),
+      el("p", { class: "note" }, "Pushes to your repositories show up next to their projects. Pulse keeps no GitHub token, and disconnecting deletes the pushes it recorded."),
+    );
+    if (github.install_url) {
+      body.push(el("p", { class: "note" }, el("a", { href: github.install_url, target: "_blank", rel: "noopener noreferrer" }, "Choose which repositories Pulse hears about")));
+    }
+  } else if (github.can_connect) {
+    body.push(el("div", { class: "row" }, el("span", { class: "name" }, "Not connected"), el("a", { class: "button", href: "/auth/github" }, "Connect GitHub")));
+  } else {
+    body.push(el("p", { class: "empty-note" }, "Connecting GitHub is not set up on this server."));
+  }
+  return el("div", {}, el("h2", {}, "GitHub"), body);
 }
 
 function ownerPanel(me) {
@@ -168,6 +203,7 @@ function ownerPanel(me) {
       checked: me.user.profile_public,
       onchange: async (event) => { await api("/api/me", { method: "PATCH", body: { profile_public: event.target.checked } }); },
     }), " Anyone can see this profile. Project names stay hidden until you show them."),
+    githubSection(me),
     el("h2", {}, "Computers"),
     list,
     el("div", { class: "row" }, nameInput, el("button", { onclick: addToken }, "Connect a computer")),

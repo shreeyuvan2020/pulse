@@ -8,8 +8,9 @@ use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use hmac::{Hmac, Mac};
 use http_body_util::BodyExt;
-use pulse_server::config::Config;
+use pulse_server::config::{Config, GithubConfig};
 use pulse_server::state::AppState;
 use pulse_server::{now, router};
 use serde_json::{Value, json};
@@ -86,6 +87,7 @@ async fn harness(configure: impl FnOnce(&mut Config)) -> Option<Harness> {
         hca_client_id: None,
         hca_client_secret: None,
         dev_login: true,
+        github: Default::default(),
     };
     configure(&mut config);
     let state = AppState::new(db, config);
@@ -671,5 +673,490 @@ async fn pages_and_api_carry_security_headers() {
         );
         assert_eq!(reply.headers[header::CACHE_CONTROL], "no-store");
     }
+    h.finish().await;
+}
+
+/// A stand-in for GitHub's sign-in and user endpoints. The code `good-<id>`
+/// signs in the GitHub account numbered `<id>`; any other code is refused the
+/// way GitHub does it, with a 200 and an error body.
+async fn stub_github() -> String {
+    let github = Router::new()
+        .route(
+            "/login/oauth/access_token",
+            post(|headers: HeaderMap, Json(body): Json<Value>| async move {
+                assert_eq!(headers["accept"], "application/json");
+                assert_eq!(body["client_id"], "gid");
+                assert_eq!(body["client_secret"], "gsecret");
+                match body["code"]
+                    .as_str()
+                    .and_then(|code| code.strip_prefix("good-"))
+                {
+                    Some(id) => Json(
+                        json!({ "access_token": format!("token-{id}"), "token_type": "bearer" }),
+                    ),
+                    None => Json(json!({ "error": "bad_verification_code" })),
+                }
+            }),
+        )
+        .route(
+            "/user",
+            get(|headers: HeaderMap| async move {
+                let token = headers["authorization"]
+                    .to_str()
+                    .unwrap()
+                    .strip_prefix("Bearer token-")
+                    .map(str::to_owned);
+                match token.and_then(|id| id.parse::<i64>().ok()) {
+                    Some(id) => (
+                        StatusCode::OK,
+                        Json(json!({ "id": id, "login": format!("gh-user-{id}") })),
+                    ),
+                    None => (StatusCode::UNAUTHORIZED, Json(json!({}))),
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, github).await.unwrap() });
+    base
+}
+
+fn github_config(base: &str) -> GithubConfig {
+    GithubConfig {
+        client_id: Some("gid".into()),
+        client_secret: Some("gsecret".into()),
+        webhook_secret: Some("whsecret".into()),
+        app_slug: Some("pulse-test".into()),
+        oauth_base: base.into(),
+        api_base: base.into(),
+    }
+}
+
+#[tokio::test]
+async fn connecting_github_proves_the_account_and_one_account_belongs_to_one_person() {
+    let base = stub_github().await;
+    let Some(h) = harness(|config| config.github = github_config(&base)).await else {
+        return;
+    };
+    let rowan = h.sign_in("rowan").await;
+    let sam = h.sign_in("sam").await;
+
+    assert_eq!(
+        h.call("GET", "/auth/github", &[], None).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    let start = h
+        .call("GET", "/auth/github", &Harness::browser(&rowan), None)
+        .await;
+    assert_eq!(start.status, StatusCode::SEE_OTHER);
+    let location = start.headers[header::LOCATION].to_str().unwrap().to_owned();
+    let state = start.cookie("pulse_github").unwrap();
+    assert!(
+        location.starts_with(&format!(
+            "{base}/login/oauth/authorize?client_id=gid&redirect_uri="
+        )),
+        "{location}"
+    );
+    assert!(
+        location.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fauth%2Fgithub%2Fcallback"),
+        "{location}"
+    );
+    assert!(location.contains(&format!("state={state}")));
+
+    let with_state = |session: &str, state: &str| {
+        let mut headers = Harness::browser(session);
+        headers.push((
+            "cookie",
+            format!("pulse_session={session}; pulse_github={state}"),
+        ));
+        headers
+    };
+    let callback =
+        |code: &str, state: &str| format!("/auth/github/callback?code={code}&state={state}");
+
+    // a callback that does not carry the state this browser was given is refused
+    let forged = h
+        .call(
+            "GET",
+            &callback("good-4242", "forged"),
+            &with_state(&rowan, &state),
+            None,
+        )
+        .await;
+    assert_eq!(forged.status, StatusCode::BAD_REQUEST);
+    let no_cookie = h
+        .call(
+            "GET",
+            &callback("good-4242", &state),
+            &Harness::browser(&rowan),
+            None,
+        )
+        .await;
+    assert_eq!(no_cookie.status, StatusCode::BAD_REQUEST);
+    // GitHub refusing the code is a bad gateway, not a connection
+    let refused = h
+        .call(
+            "GET",
+            &callback("nope", &state),
+            &with_state(&rowan, &state),
+            None,
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_GATEWAY);
+    // and someone who is not signed in cannot connect anything
+    let anonymous = h
+        .call(
+            "GET",
+            &callback("good-4242", &state),
+            &[("cookie", format!("pulse_github={state}"))],
+            None,
+        )
+        .await;
+    assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+
+    let done = h
+        .call(
+            "GET",
+            &callback("good-4242", &state),
+            &with_state(&rowan, &state),
+            None,
+        )
+        .await;
+    assert_eq!(done.status, StatusCode::SEE_OTHER);
+    assert_eq!(done.headers[header::LOCATION], "/u/rowan");
+    let me = h
+        .call("GET", "/api/me", &Harness::browser(&rowan), None)
+        .await
+        .json();
+    assert_eq!(me["user"]["github_login"], "gh-user-4242");
+    assert_eq!(
+        me["github"]["install_url"],
+        "https://github.com/apps/pulse-test/installations/new"
+    );
+
+    // the same GitHub account cannot also be Sam's
+    let taken = h
+        .call(
+            "GET",
+            &callback("good-4242", &state),
+            &with_state(&sam, &state),
+            None,
+        )
+        .await;
+    assert_eq!(taken.status, StatusCode::CONFLICT);
+    assert!(
+        h.call("GET", "/api/me", &Harness::browser(&sam), None)
+            .await
+            .json()["user"]["github_login"]
+            .is_null()
+    );
+    // a different one can
+    let other = h
+        .call(
+            "GET",
+            &callback("good-777", &state),
+            &with_state(&sam, &state),
+            None,
+        )
+        .await;
+    assert_eq!(other.status, StatusCode::SEE_OTHER);
+
+    // a server without GitHub set up says so instead of redirecting somewhere
+    h.finish().await;
+    let Some(plain) = harness(|_| {}).await else {
+        return;
+    };
+    let session = plain.sign_in("rowan").await;
+    assert_eq!(
+        plain
+            .call("GET", "/auth/github", &Harness::browser(&session), None)
+            .await
+            .status,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    plain.finish().await;
+}
+
+fn signed(secret: &str, body: &str) -> String {
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+    mac.update(body.as_bytes());
+    let hex: String = mac
+        .finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("sha256={hex}")
+}
+
+fn push(sender: i64, repo: &str, git_ref: &str, after: char, pushed_at: i64) -> Value {
+    json!({
+        "ref": git_ref, "after": after.to_string().repeat(40), "forced": false, "deleted": false,
+        "commits": [{ "id": "b".repeat(40) }, { "id": after.to_string().repeat(40) }, { "id": "not-a-sha" }],
+        "repository": { "full_name": repo, "pushed_at": pushed_at },
+        "sender": { "id": sender },
+    })
+}
+
+impl Harness {
+    async fn deliver(&self, secret: &str, event: &str, delivery: &str, body: &Value) -> Reply {
+        let text = body.to_string();
+        let headers = [
+            ("x-hub-signature-256", signed(secret, &text)),
+            ("x-github-event", event.into()),
+            ("x-github-delivery", delivery.into()),
+        ];
+        self.call("POST", "/api/github/webhook", &headers, Some(body.clone()))
+            .await
+    }
+
+    async fn push_count(&self) -> i64 {
+        sqlx::query_scalar("select count(*) from pushes")
+            .fetch_one(&self.state.db)
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn only_signed_pushes_from_connected_people_are_recorded_and_replays_are_ignored() {
+    let Some(h) = harness(|config| config.github = github_config("http://127.0.0.1:1")).await
+    else {
+        return;
+    };
+    let session = h.sign_in("rowan").await;
+    sqlx::query(
+        "update users set github_id = 4242, github_login = 'rowan-gh' where username = 'rowan'",
+    )
+    .execute(&h.state.db)
+    .await
+    .unwrap();
+    let pushed = now() - 120;
+    let good = push(4242, "Rowan/CS2-Web", "refs/heads/main", 'a', pushed);
+    let sign = |body: &Value| signed("whsecret", &body.to_string());
+
+    // unsigned, wrongly signed and signed-for-another-body deliveries are all refused
+    let unsigned = h
+        .call(
+            "POST",
+            "/api/github/webhook",
+            &[("x-github-event", "push".into())],
+            Some(good.clone()),
+        )
+        .await;
+    assert_eq!(unsigned.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        h.deliver("wrong", "push", "d1", &good).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    let other_body = push(4242, "Rowan/CS2-Web", "refs/heads/main", 'c', pushed);
+    let swapped = [
+        ("x-hub-signature-256", sign(&other_body)),
+        ("x-github-event", "push".into()),
+    ];
+    assert_eq!(
+        h.call("POST", "/api/github/webhook", &swapped, Some(good.clone()))
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(h.push_count().await, 0);
+
+    // things that are signed but not a recordable push: pings, tags, deleted branches,
+    // people who never connected, and other kinds of event
+    assert_eq!(
+        h.deliver(
+            "whsecret",
+            "ping",
+            "d2",
+            &json!({ "zen": "Keep it logically awesome." })
+        )
+        .await
+        .status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        h.deliver(
+            "whsecret",
+            "push",
+            "d3",
+            &push(4242, "Rowan/CS2-Web", "refs/tags/v1", 'a', pushed)
+        )
+        .await
+        .status,
+        StatusCode::NO_CONTENT
+    );
+    let mut deleted = push(4242, "Rowan/CS2-Web", "refs/heads/gone", '0', pushed);
+    deleted["deleted"] = json!(true);
+    assert_eq!(
+        h.deliver("whsecret", "push", "d4", &deleted).await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        h.deliver(
+            "whsecret",
+            "push",
+            "d5",
+            &push(999, "Rowan/CS2-Web", "refs/heads/main", 'a', pushed)
+        )
+        .await
+        .status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        h.deliver("whsecret", "issues", "d6", &good).await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(h.push_count().await, 0);
+    let broken = push(4242, "not a repo", "refs/heads/main", 'a', pushed);
+    assert_eq!(
+        h.deliver("whsecret", "push", "d7", &broken).await.status,
+        StatusCode::BAD_REQUEST
+    );
+
+    assert_eq!(
+        h.deliver("whsecret", "push", "d8", &good).await.status,
+        StatusCode::NO_CONTENT
+    );
+    // the same signed body again, under a fresh delivery id, is still one push
+    assert_eq!(
+        h.deliver("whsecret", "push", "a-different-delivery", &good)
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(h.push_count().await, 1);
+    let row = sqlx::query("select repo, ref, head_sha, commit_shas, pushed_at from pushes")
+        .fetch_one(&h.state.db)
+        .await
+        .unwrap();
+    use sqlx::Row;
+    assert_eq!(
+        row.get::<String, _>("repo"),
+        "rowan/cs2-web",
+        "stored lowercase so it matches a project name"
+    );
+    assert_eq!(
+        row.get::<Vec<String>, _>("commit_shas"),
+        vec!["b".repeat(40), "a".repeat(40)],
+        "only real commit ids are kept"
+    );
+    assert_eq!(row.get::<Option<i64>, _>("pushed_at"), Some(pushed));
+
+    // a push time from the future is not believed
+    let future = push(
+        4242,
+        "Rowan/CS2-Web",
+        "refs/heads/dev",
+        'd',
+        now() + 100_000,
+    );
+    assert_eq!(
+        h.deliver("whsecret", "push", "d9", &future).await.status,
+        StatusCode::NO_CONTENT
+    );
+    let times: Vec<Option<i64>> =
+        sqlx::query_scalar("select pushed_at from pushes where head_sha like 'dd%'")
+            .fetch_all(&h.state.db)
+            .await
+            .unwrap();
+    assert_eq!(times, vec![None]);
+
+    // a body bigger than the usual 1 MiB limit is fine (big pushes list many commits), but not unbounded
+    let mut big = push(4242, "Rowan/CS2-Web", "refs/heads/big", 'e', pushed);
+    big["padding"] = json!("x".repeat(2 << 20));
+    assert_eq!(
+        h.deliver("whsecret", "push", "d10", &big).await.status,
+        StatusCode::NO_CONTENT
+    );
+    big["padding"] = json!("x".repeat(9 << 20));
+    assert_eq!(
+        h.deliver("whsecret", "push", "d11", &big).await.status,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    assert_eq!(h.push_count().await, 3);
+
+    // the project's page shows them, but only as much as the project itself is shown
+    let (_, token) = h.new_token(&session, "laptop").await;
+    h.send(
+        &token,
+        json!([{ "project": "github.com/rowan/cs2-web", "slot": past_slot(0), "seconds": 60 }]),
+    )
+    .await;
+    let stranger = h.profile("rowan", None).await.json();
+    assert_eq!(
+        (
+            &stranger["projects"][0]["url"],
+            &stranger["projects"][0]["last_push_at"],
+            &stranger["projects"][0]["pushes"]
+        ),
+        (&Value::Null, &Value::Null, &json!(0)),
+        "a hidden project's repository must not leak through its pushes"
+    );
+    let owner = h.profile("rowan", Some(&session)).await.json();
+    let project = &owner["projects"][0];
+    assert_eq!(project["url"], "https://github.com/rowan/cs2-web");
+    assert_eq!(project["pushes"], 3);
+    // the pushes were at `pushed`, `received_at` for the future one, and `pushed`
+    let latest =
+        sqlx::query_scalar::<_, i64>("select max(coalesce(pushed_at, received_at)) from pushes")
+            .fetch_one(&h.state.db)
+            .await
+            .unwrap();
+    assert_eq!(project["last_push_at"], latest);
+    assert!(latest >= pushed);
+    let id = project["id"].as_i64().unwrap();
+    h.call(
+        "PATCH",
+        &format!("/api/projects/{id}"),
+        &Harness::browser(&session),
+        Some(json!({ "public": true })),
+    )
+    .await;
+    let public = h.profile("rowan", None).await.json();
+    assert_eq!(
+        (
+            &public["projects"][0]["url"],
+            &public["projects"][0]["pushes"]
+        ),
+        (&json!("https://github.com/rowan/cs2-web"), &json!(3))
+    );
+
+    // disconnecting forgets the account and what was recorded for it
+    assert_eq!(
+        h.call("DELETE", "/api/github", &Harness::browser(&session), None)
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(h.push_count().await, 0);
+    assert_eq!(
+        h.deliver("whsecret", "push", "d12", &good).await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        h.push_count().await,
+        0,
+        "after disconnecting, pushes are not recorded again"
+    );
+    h.finish().await;
+}
+
+#[tokio::test]
+async fn pushes_are_refused_outright_when_no_webhook_secret_is_set() {
+    // a server without a secret must not fall back to trusting unsigned deliveries
+    let Some(h) = harness(|_| {}).await else {
+        return;
+    };
+    let body = push(1, "a/b", "refs/heads/main", 'a', now());
+    let reply = h
+        .call(
+            "POST",
+            "/api/github/webhook",
+            &[("x-github-event", "push".into())],
+            Some(body),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
     h.finish().await;
 }

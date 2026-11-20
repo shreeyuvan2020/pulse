@@ -20,6 +20,7 @@ impl AppState {
             db,
             config: Arc::new(config),
             http: reqwest::Client::builder()
+                .user_agent("pulse-server")
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .expect("http client"),

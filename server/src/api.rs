@@ -34,13 +34,19 @@ pub fn routes() -> Router<AppState> {
         .route("/api/users/{username}", get(profile))
 }
 
-async fn me(OptionalUser(user): OptionalUser) -> Json<Value> {
+async fn me(State(state): State<AppState>, OptionalUser(user): OptionalUser) -> Json<Value> {
+    let github = &state.config.github;
     Json(json!({
         "user": user.map(|user| json!({
             "username": user.username,
             "display_name": user.display_name,
             "profile_public": user.profile_public,
+            "github_login": user.github_login,
         })),
+        "github": {
+            "can_connect": github.connect_enabled(),
+            "install_url": github.install_url(),
+        },
     }))
 }
 
@@ -412,9 +418,15 @@ async fn profile(
         .map(|day| json!({ "date": stats::date_string(day), "seconds": daily.get(&day).copied().unwrap_or(0) }))
         .collect();
 
+    // pushes are matched to a project by repository name, ignoring case
     let projects: Vec<Value> = sqlx::query(
-        "select p.id, p.key, p.public, sum(c.seconds)::bigint as seconds from credits c \
-         join projects p on p.id = c.project_id where c.user_id = $1 group by p.id order by seconds desc, p.id",
+        "select p.id, p.key, p.public, sum(c.seconds)::bigint as seconds, \
+         (select max(coalesce(pu.pushed_at, pu.received_at)) from pushes pu \
+            where pu.user_id = p.user_id and 'github.com/' || pu.repo = lower(p.key)) as last_push_at, \
+         (select count(*) from pushes pu \
+            where pu.user_id = p.user_id and 'github.com/' || pu.repo = lower(p.key))::bigint as pushes \
+         from credits c join projects p on p.id = c.project_id \
+         where c.user_id = $1 group by p.id order by seconds desc, p.id",
     )
     .bind(target.id)
     .fetch_all(&state.db)
@@ -423,11 +435,16 @@ async fn profile(
     .map(|row| {
         let public: bool = row.get("public");
         let shown = is_owner || public;
+        let key: String = row.get("key");
+        // a repository's link and push times are as private as its name
         json!({
             "id": is_owner.then(|| row.get::<i64, _>("id")),
-            "name": shown.then(|| row.get::<String, _>("key")),
+            "name": shown.then(|| key.clone()),
+            "url": if shown { crate::github::repo_url(&key) } else { None },
             "public": public,
             "seconds": row.get::<i64, _>("seconds"),
+            "last_push_at": if shown { row.get::<Option<i64>, _>("last_push_at") } else { None },
+            "pushes": if shown { row.get::<i64, _>("pushes") } else { 0 },
         })
     })
     .collect();

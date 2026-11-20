@@ -28,6 +28,7 @@ pub struct User {
     pub username: String,
     pub display_name: String,
     pub profile_public: bool,
+    pub github_login: Option<String>,
 }
 
 /// The columns `user_from_row` reads. A macro, because sqlx only accepts SQL
@@ -35,7 +36,7 @@ pub struct User {
 #[macro_export]
 macro_rules! user_columns {
     () => {
-        "u.id, u.username, u.display_name, u.profile_public"
+        "u.id, u.username, u.display_name, u.profile_public, u.github_login"
     };
 }
 
@@ -45,6 +46,7 @@ pub fn user_from_row(row: &PgRow) -> User {
         username: row.get("username"),
         display_name: row.get("display_name"),
         profile_public: row.get("profile_public"),
+        github_login: row.get("github_login"),
     }
 }
 
@@ -151,7 +153,7 @@ pub fn routes() -> Router<AppState> {
         .route("/auth/logout", post(logout))
 }
 
-fn cookie(
+pub fn cookie(
     state: &AppState,
     name: &'static str,
     value: String,

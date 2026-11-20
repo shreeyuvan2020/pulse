@@ -47,6 +47,15 @@ export PULSE_DEV_LOGIN=1     # sign in as any name; only works when PULSE_BASE_U
 cargo run -p pulse-server
 ```
 
+### GitHub
+
+A GitHub App gives two things, each switched on by its own settings:
+
+- **Connect GitHub** (`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, callback `<server>/auth/github/callback`) proves which GitHub account is yours. Pulse reads your numeric id and keeps no token.
+- **Push times** (`GITHUB_WEBHOOK_SECRET`, webhook URL `<server>/api/github/webhook`, event `push`, permission Contents: read; `GITHUB_APP_SLUG` adds an install link): a push is recorded only if its signature checks out and its sender is a connected person. The time comes from GitHub's notification, never from commit dates, which anyone can set.
+
+A project named `github.com/owner/repo` links to the repository and shows its push count and last push, but only when its owner has made the project public, like its name.
+
 Tests need a Postgres they may create databases in: `PULSE_TEST_DATABASE_URL=postgres://user@localhost/postgres cargo test -p pulse-server`. 
 
 To send your time: make a token on your profile page ("Connect a computer"), run `pulse login <server>` and paste it, then keep `pulse daemon` running. It uploads credited time every minute (per project and 5-minute slot, with prompt counts and tool names; never recordings, prompts or paths). `pulse sync` sends right away, `pulse logout` disconnects. Plain `http://` is only accepted for localhost.
