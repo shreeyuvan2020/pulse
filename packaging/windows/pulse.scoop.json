@@ -6,7 +6,7 @@
     "architecture": {
         "64bit": {
             "url": "https://github.com/shreeyuvan2020/pulse/releases/download/v0.1.0/pulse-windows-x86_64.zip",
-            "hash": "REPLACE_WITH_THE_RELEASE_SHA256"
+            "hash": "4da7dc21e5122291be23f1909199e7d6c99820bc9a2693372619c9a7936687f1"
         }
     },
     "bin": "pulse.exe",

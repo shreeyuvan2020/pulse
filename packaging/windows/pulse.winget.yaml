@@ -1,5 +1,5 @@
-# Winget portable manifest. The InstallerSha256 must be filled in from the
-# first release; until then this is a template.
+# Winget portable manifest. Bump the version, url and InstallerSha256 together
+# on each release.
 PackageIdentifier: HackClub.Pulse
 PackageVersion: 0.1.0
 PackageName: Pulse
@@ -15,6 +15,6 @@ Installers:
   - Architecture: x64
     InstallerType: portable
     InstallerUrl: https://github.com/shreeyuvan2020/pulse/releases/download/v0.1.0/pulse-windows-x86_64.zip
-    InstallerSha256: REPLACE_WITH_THE_RELEASE_SHA256
+    InstallerSha256: 4da7dc21e5122291be23f1909199e7d6c99820bc9a2693372619c9a7936687f1
 ManifestType: singleton
 ManifestVersion: 1.9.0
