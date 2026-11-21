@@ -7,6 +7,7 @@ pub mod activity;
 mod attribution;
 pub mod chain;
 mod event;
+pub mod helper_ipc;
 
 pub use attribution::{Params, ProjectTotals, Report, attribute, engaged_projects};
 pub use event::{Event, EventKind, PROTOCOL_VERSION, TERMINAL_SOURCE, source_is_agent};

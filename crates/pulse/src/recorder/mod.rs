@@ -172,6 +172,12 @@ impl Recorder {
         Ok(())
     }
 
+    /// Lets go of the screen while nothing is being recorded (see
+    /// `Capture::release`). The next `record` takes it again.
+    pub fn release_screen(&mut self) {
+        self.capture.release();
+    }
+
     /// Whether there is enough free disk to start a new segment. Says so once
     /// when recording pauses and once when it resumes.
     fn has_room(&mut self) -> bool {

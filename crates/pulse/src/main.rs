@@ -12,6 +12,8 @@ mod sync;
 mod tail;
 mod terminal;
 mod tray;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod wayland;
 
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
@@ -441,12 +443,30 @@ fn confirm(question: &str) -> Result<bool, String> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
 }
 
+#[cfg(all(unix, not(target_os = "macos")))]
+fn print_wayland_status() {
+    if !wayland::is_session() {
+        return;
+    }
+    match wayland::client() {
+        Ok(client) => println!(
+            "Wayland: helper running, idle timer {}",
+            client.idle_backend().as_deref().unwrap_or("not answering")
+        ),
+        Err(reason) => println!("Wayland: {reason}"),
+    }
+}
+
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn print_wayland_status() {}
+
 fn print_status(store: &Store) {
     println!("Data: {}", store.root().display());
     match presence::IdleTimer::new().idle_seconds() {
         Some(seconds) => println!("Idle timer: available (last input {seconds}s ago)"),
         None => println!("Idle timer: unavailable, prompts are used as the sign you are present"),
     }
+    print_wayland_status();
     let exists = |path: Option<&Path>| path.is_some_and(Path::exists);
     let claude = paths::claude_dir();
     let hooks = claude
@@ -523,6 +543,7 @@ fn benchmark(store: &Store, dir: std::path::PathBuf, seconds: u64) -> Result<(),
         std::thread::sleep(daemon::until_next_second());
     }
     recorder.finish().map_err(|error| error.to_string())?;
+    recorder.release_screen();
     let wall = started.elapsed().as_secs_f64();
     let stats = recorder.stats;
     let megabytes = stats.bytes as f64 / 1e6;

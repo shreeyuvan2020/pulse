@@ -61,12 +61,12 @@ name = "pulse"
 maintainer = "Hack Club <hi@hackclub.com>"
 copyright = "2026, Hack Club"
 license-file = "../../LICENSE"
-extended-description = "Passive time tracking for building with AI coding agents. Records the screen at one frame per second while a coding agent session is open, tracks credited time locally, and can send it to a Pulse server. Recordings never leave the computer unless submitted."
+extended-description = "Passive time tracking for building with AI coding agents. Records the screen at one frame per second while a coding agent session is open, tracks credited time locally, and can send it to a Pulse server. Recordings never leave the computer unless submitted. Wayland sessions use the pulse-wayland helper, which asks the desktop's screen sharing portal."
 section = "utils"
 priority = "optional"
-depends = "libx11-6, libxkbcommon0"
+depends = "$auto, libx11-6, libxkbcommon0, xdg-desktop-portal"
 assets = [
     ["assets/tray.png", "usr/share/icons/hicolor/64x64/apps/pulse.png", "644"],
-    # cargo-deb adjusts this path for --target builds itself
     ["target/release/pulse", "usr/bin/pulse", "755"],
+    ["target/release/pulse-wayland", "usr/bin/pulse-wayland", "755"],
 ]

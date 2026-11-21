@@ -1,6 +1,6 @@
-//! Grabs the whole screen: X11, macOS (ScreenCaptureKit) and Windows (DXGI
-//! Desktop Duplication). Wayland (xdg-desktop-portal + PipeWire) comes next
-//! and will return the same `Frame`.
+//! Grabs the whole screen: X11, Wayland (through the `pulse-wayland` helper,
+//! see `wayland.rs`), macOS (ScreenCaptureKit) and Windows (DXGI Desktop
+//! Duplication). Every backend returns the same `Frame`.
 
 #[cfg(windows)]
 mod dxgi;
@@ -11,7 +11,7 @@ use super::encode::Frame;
 
 pub struct Capture {
     #[cfg(all(unix, not(target_os = "macos")))]
-    x11: x11::Screen,
+    linux: Linux,
     #[cfg(target_os = "macos")]
     macos: macos::Screen,
     #[cfg(windows)]
@@ -23,7 +23,12 @@ impl Capture {
     pub fn open() -> Result<Capture, String> {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            x11::Screen::open().map(|x11| Capture { x11 })
+            let linux = if crate::wayland::is_session() {
+                Linux::Wayland(crate::wayland::client()?)
+            } else {
+                Linux::X11(Box::new(x11::Screen::open()?))
+            };
+            Ok(Capture { linux })
         }
         #[cfg(target_os = "macos")]
         {
@@ -42,7 +47,10 @@ impl Capture {
     pub fn grab(&mut self) -> Option<Frame> {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            self.x11.grab()
+            match &mut self.linux {
+                Linux::X11(screen) => screen.grab(),
+                Linux::Wayland(client) => client.grab(),
+            }
         }
         #[cfg(target_os = "macos")]
         {
@@ -57,6 +65,23 @@ impl Capture {
             None
         }
     }
+}
+
+impl Capture {
+    /// Stops using the screen until the next `grab`. On Wayland that closes
+    /// the screen share, so the desktop's recording indicator goes off.
+    pub fn release(&mut self) {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if let Linux::Wayland(client) = &self.linux {
+            client.release();
+        }
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+enum Linux {
+    X11(Box<x11::Screen>),
+    Wayland(std::sync::Arc<crate::wayland::Client>),
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -75,11 +100,7 @@ mod x11 {
     impl Screen {
         pub fn open() -> Result<Screen, String> {
             if std::env::var_os("DISPLAY").is_none() {
-                return Err(if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                    "screen recording on Wayland is not supported yet".into()
-                } else {
-                    "no display to record".into()
-                });
+                return Err("no display to record".into());
             }
             let xlib = xlib::Xlib::open().map_err(|error| error.to_string())?;
             // SAFETY: a null name opens $DISPLAY; a null result is handled

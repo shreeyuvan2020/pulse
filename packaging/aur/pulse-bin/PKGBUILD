@@ -9,11 +9,12 @@ pkgdesc="Passive time tracking for building with AI coding agents"
 arch=('x86_64')
 url="https://github.com/shreeyuvan2020/pulse"
 license=('AGPL-3.0-only')
-depends=('libx11' 'libxkbcommon-x11')
+depends=('libx11' 'libxkbcommon-x11' 'libpipewire' 'xdg-desktop-portal')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/shreeyuvan2020/pulse/releases/download/v$pkgver/pulse-linux-amd64.tar.gz")
 sha256sums=('SKIP')
 
 package() {
 	install -Dm755 "$srcdir/pulse" "$pkgdir/usr/bin/pulse"
+	install -Dm755 "$srcdir/pulse-wayland" "$pkgdir/usr/bin/pulse-wayland"
 	install -Dm644 "$srcdir/../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

@@ -18,23 +18,26 @@ permissions:
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    # the oldest runner still offered, so the binaries run on as many distros
+    # as possible (they link the system's glibc: Pulse loads the X11 libraries
+    # and Cisco's video codec at runtime, which a static musl build cannot do)
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build (static musl, so it runs on any Linux from old to new)
+      - name: Build pulse and the Wayland helper
         run: |
-          sudo apt-get update && sudo apt-get install -y musl-tools
-          rustup target add x86_64-unknown-linux-musl
-          cargo build --release -p pulse --target x86_64-unknown-linux-musl
+          sudo apt-get update
+          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev libclang-dev pkg-config
+          cargo build --release -p pulse -p pulse-wayland
       - name: Build the .deb
         run: |
           cargo install cargo-deb --locked
-          cd crates/pulse && cargo deb --target x86_64-unknown-linux-musl
+          cd crates/pulse && cargo deb --no-build
       - name: Collect artifacts
         run: |
           mkdir -p dist
-          tar czf dist/pulse-linux-amd64.tar.gz -C target/x86_64-unknown-linux-musl/release pulse
+          tar czf dist/pulse-linux-amd64.tar.gz -C target/release pulse pulse-wayland
           cp target/debian/pulse_*_amd64.deb dist/
       - uses: actions/upload-artifact@v4
         with:
@@ -149,7 +152,7 @@ jobs:
 
             Windows and macOS builds are signed when the maintainers' signing credentials are set up; if your system warns about an unknown publisher, see docs/signing.md.
 
-            - Linux: `pulse-linux-amd64.tar.gz`, or `pulse_0.1.0-1_amd64.deb` (Debian/Ubuntu)
+            - Linux: `pulse-linux-amd64.tar.gz` (`pulse` and the Wayland helper `pulse-wayland`), or the `.deb` (Debian/Ubuntu)
             - macOS: `pulse-macos-universal.tar.gz` (contains Pulse.app, Apple Silicon and Intel)
             - Windows: `pulse-windows-x86_64.zip`
 

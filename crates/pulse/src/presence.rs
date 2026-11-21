@@ -5,6 +5,8 @@
 pub struct IdleTimer {
     #[cfg(all(unix, not(target_os = "macos")))]
     x11: Option<x11::Connection>,
+    #[cfg(all(unix, not(target_os = "macos")))]
+    wayland: bool,
 }
 
 impl IdleTimer {
@@ -12,6 +14,8 @@ impl IdleTimer {
         IdleTimer {
             #[cfg(all(unix, not(target_os = "macos")))]
             x11: x11::Connection::open(),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            wayland: crate::wayland::is_session(),
         }
     }
 
@@ -53,6 +57,11 @@ impl IdleTimer {
 
     #[cfg(all(unix, not(target_os = "macos")))]
     fn platform_idle_seconds(&mut self) -> Option<u64> {
+        // on Wayland an X display can only see input meant for X programs
+        // (XWayland), so the compositor's own idle timer is the only honest one
+        if self.wayland {
+            return crate::wayland::idle_seconds();
+        }
         self.x11.as_ref()?.idle_seconds()
     }
 
@@ -69,8 +78,8 @@ mod x11 {
     use x11_dl::{xlib, xss};
 
     /// X11 screensaver extension, loaded at runtime so Pulse still starts on
-    /// machines without libX11/libXss. Wayland-only sessions return `None`
-    /// here for now.
+    /// machines without libX11/libXss. Wayland sessions use the helper in
+    /// `wayland.rs` instead.
     pub struct Connection {
         xlib: xlib::Xlib,
         xss: xss::Xss,

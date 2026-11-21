@@ -1,0 +1,19 @@
+[package]
+name = "pulse-wayland"
+description = "Screen capture and idle time on Wayland for Pulse (xdg-desktop-portal and PipeWire)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pulse-core.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.14", default-features = false, features = ["async-io", "screencast"] }
+pipewire = "0.10"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+zbus = "6"
+async-io = "2"

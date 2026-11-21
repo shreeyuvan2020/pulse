@@ -18,6 +18,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - name: PipeWire headers for the Wayland helper
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev libclang-dev pkg-config
       - run: cargo fmt --check
       - run: cargo clippy --workspace --exclude pulse-server --all-targets -- -D warnings
       - run: cargo test --workspace --exclude pulse-server

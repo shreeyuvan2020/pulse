@@ -151,6 +151,7 @@ pub fn run(store: &Store, record: bool) -> io::Result<()> {
                 eprintln!("pulse: nothing happening, recording paused");
                 if let Some(recorder) = &mut recorder {
                     recorder.finish()?;
+                    recorder.release_screen();
                 }
             }
         }
