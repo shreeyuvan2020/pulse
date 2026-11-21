@@ -67,7 +67,7 @@ To send your time: make a token on your profile page ("Connect a computer"), run
 
 ## Installing
 
-- **Linux:** `curl -fsSL https://raw.githubusercontent.com/shreeyuvan2020/pulse/main/packaging/install.sh | bash` installs the latest release into `~/.local/bin`. Debian and Ubuntu can use the `.deb` from the release page; Arch users can build `packaging/aur/pulse-bin` from the AUR.
+- **Linux:** `curl -fsSL https://raw.githubusercontent.com/shreeyuvan2020/pulse/main/packaging/install.sh | bash` installs the latest release into `~/.local/bin`. Debian and Ubuntu can use the `.deb` from the release page (Ubuntu 22.04 or newer); the Wayland helper in it needs a newer system than `pulse` does (Ubuntu 24.04, Debian 13, Fedora 40 or newer), and on older ones Pulse records X11 sessions only; Arch users can build `packaging/aur/pulse-bin` from the AUR.
 - **macOS:** the same one-liner installs `Pulse.app` into `~/Applications` (move it to `/Applications` to keep it in the menu bar every day), or `brew install pulse` from a tap of `packaging/homebrew/pulse.rb`.
 - **Windows:** the release zip on the release page, or `winget install HackClub.Pulse` / `scoop install pulse` once the manifests in `packaging/windows` are published with their hashes.
 

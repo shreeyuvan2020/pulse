@@ -64,7 +64,10 @@ license-file = "../../LICENSE"
 extended-description = "Passive time tracking for building with AI coding agents. Records the screen at one frame per second while a coding agent session is open, tracks credited time locally, and can send it to a Pulse server. Recordings never leave the computer unless submitted. Wayland sessions use the pulse-wayland helper, which asks the desktop's screen sharing portal."
 section = "utils"
 priority = "optional"
-depends = "$auto, libx11-6, libxkbcommon0, xdg-desktop-portal"
+# pulse itself runs on glibc 2.35 and newer; only the Wayland helper needs a newer
+# system (PipeWire), so those are recommended, not required
+depends = "libc6 (>= 2.35), libx11-6, libxkbcommon0"
+recommends = "xdg-desktop-portal, libpipewire-0.3-0t64 | libpipewire-0.3-0"
 assets = [
     ["assets/tray.png", "usr/share/icons/hicolor/64x64/apps/pulse.png", "644"],
     ["target/release/pulse", "usr/bin/pulse", "755"],

@@ -17,19 +17,40 @@ permissions:
   actions: read
 
 jobs:
-  linux:
-    # the oldest runner still offered, so the binaries run on as many distros
-    # as possible (they link the system's glibc: Pulse loads the X11 libraries
-    # and Cisco's video codec at runtime, which a static musl build cannot do)
+  # pulse has no PipeWire dependency, so it is built on the oldest runner still
+  # offered and runs on as many distros as possible. It links the system's
+  # glibc (not static musl) because it loads the X11 libraries and Cisco's
+  # video codec at runtime, which a static binary cannot do.
+  linux-pulse:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build pulse and the Wayland helper
+      - run: cargo build --release -p pulse
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-pulse
+          path: target/release/pulse
+
+  # the Wayland helper needs PipeWire headers newer than Ubuntu 22.04 has (the
+  # pipewire crate requires them), so it is built on Ubuntu 24.04 and packaged
+  # with pulse here
+  linux:
+    needs: linux-pulse
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-pulse
+          path: target/release
+      - name: Build the Wayland helper
         run: |
           sudo apt-get update
           sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev libclang-dev pkg-config
-          cargo build --release -p pulse -p pulse-wayland
+          cargo build --release -p pulse-wayland
+          chmod +x target/release/pulse
       - name: Build the .deb
         run: |
           cargo install cargo-deb --locked

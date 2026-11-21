@@ -253,7 +253,15 @@ fn read_helper(mut stdout: BufReader<std::process::ChildStdout>, shared: &Shared
             }
         }
     }
-    shared.state.lock().expect("wayland state lock").alive = false;
+    let mut state = shared.state.lock().expect("wayland state lock");
+    if state.backend.is_none() {
+        // it never even said hello: most likely the system cannot run it
+        eprintln!(
+            "pulse: the Wayland helper stopped before it started. Its message above says why; on an older distribution (before Ubuntu 24.04, Debian 13 or Fedora 40) its glibc or PipeWire is usually too old, and Pulse can then only record X11 sessions"
+        );
+    }
+    state.alive = false;
+    drop(state);
     shared.changed.notify_all();
 }
 
