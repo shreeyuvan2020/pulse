@@ -1,0 +1,10 @@
+# Pulse server on an Amp Box: the server binary plus its own private Postgres.
+# Everything the services need at runtime is built into deploy/.
+build: sh deploy/build.sh
+source: false
+artifacts: [deploy]
+services:
+  db:
+    command: sh deploy/run-db.sh
+  web:
+    command: sh deploy/run-web.sh
