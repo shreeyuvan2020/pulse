@@ -47,7 +47,7 @@ function ago(unixSeconds) {
 }
 
 function renderTop(me) {
-  const nav = el("nav");
+  const nav = el("nav", {}, el("a", { href: "/install" }, "Install"));
   if (me.user) {
     nav.append(
       el("a", { href: "/submissions" }, "Submissions"),
@@ -66,7 +66,53 @@ function landing() {
       el("h1", {}, "See the time you put into building with AI."),
       el("p", {}, "Pulse counts the hours you spend in the loop with a coding agent: prompting, reading, reviewing and steering. It runs quietly in the background and keeps your recordings on your own computer."),
       el("a", { class: "button primary", href: "/auth/login" }, "Sign in with Hack Club"),
+      " ",
+      el("a", { class: "button", href: "/install" }, "Install Pulse"),
     ),
+  );
+}
+
+// a command in a box with a copy button
+function commandBox(text) {
+  const copy = el("button", {
+    onclick: async () => {
+      try { await navigator.clipboard.writeText(text); copy.textContent = "Copied"; }
+      catch { copy.textContent = "Select and copy"; }
+      setTimeout(() => { copy.textContent = "Copy"; }, 2000);
+    },
+  }, "Copy");
+  return el("div", { class: "row command" }, el("code", { class: "name" }, text), copy);
+}
+
+const RELEASE = "https://github.com/shreeyuvan2020/pulse/releases/tag/v0.1.0";
+
+function showInstall(me) {
+  const server = location.origin;
+  view.replaceChildren(
+    el("h1", {}, "Install Pulse"),
+    el("p", { class: "note" }, "Pulse runs in the background on your computer, counts the time you spend with an AI coding agent, and sends it here. Recordings stay on your computer unless you submit them."),
+    el("h2", {}, "1. Install"),
+    el("h3", {}, "macOS"),
+    commandBox("curl -fsSL https://raw.githubusercontent.com/shreeyuvan2020/pulse/main/packaging/install.sh | bash"),
+    el("p", { class: "note" }, "This installs Pulse.app into ~/Applications. The app is not signed yet: the first time, right-click it and choose Open. The command line program is at ~/Applications/Pulse.app/Contents/MacOS/pulse."),
+    el("h3", {}, "Windows"),
+    el("p", { class: "note" }, el("a", { href: RELEASE }, "Download pulse-windows-x86_64.zip"), ", unzip it, and run pulse.exe from PowerShell in that folder. SmartScreen will warn that the publisher is unknown, because the program is not signed yet: choose \"More info\", then \"Run anyway\"."),
+    el("h3", {}, "Linux"),
+    el("p", { class: "note" }, "The v0.1.0 download for Linux cannot record, so build from source for now (needs Rust 1.89 or newer; the Wayland helper also needs libpipewire-0.3-dev and libclang-dev):"),
+    commandBox("git clone https://github.com/shreeyuvan2020/pulse && cd pulse && cargo build --release -p pulse -p pulse-wayland"),
+    el("p", { class: "note" }, "The programs are in target/release. Put pulse and pulse-wayland in the same folder."),
+    el("h2", {}, "2. Connect it to your account"),
+    el("p", { class: "note" }, me.user
+      ? ["Make a token in the Computers section of ", el("a", { href: `/u/${encodeURIComponent(me.user.username)}` }, "your profile"), ", then run this and paste the token when it asks:"]
+      : ["Sign in, make a token in the Computers section of your profile, then run this and paste the token when it asks:"]),
+    commandBox(`pulse login ${server}`),
+    el("h2", {}, "3. Start tracking"),
+    commandBox("pulse daemon"),
+    el("p", { class: "note" }, "Leave it running. It sends your credited time every minute. Time counts while an AI coding agent session is open: run the command below for real-time Claude Code hooks (Codex sessions are found automatically), then send your agent a prompt and watch your profile update."),
+    commandBox("pulse install claude-code"),
+    el("h2", {}, "Check and fix"),
+    el("p", { class: "note" }, "pulse status shows what Pulse can see on your computer, and pulse sync sends your time right away. The first time it records the screen, Pulse downloads Cisco's video codec. Pulse sends nothing anywhere until you run pulse login."),
+    commandBox("pulse status"),
   );
 }
 
@@ -188,7 +234,15 @@ function ownerPanel(me) {
     try {
       const made = await api("/api/tokens", { method: "POST", body: { name: nameInput.value } });
       nameInput.value = "";
-      message.replaceChildren("Copy this token now. It is shown once.", el("code", { class: "token" }, made.token));
+      message.replaceChildren(
+        "Copy this token now. It is shown once.",
+        el("code", { class: "token" }, made.token),
+        "Then, on your computer, run this and paste the token when it asks: ",
+        el("code", {}, `pulse login ${location.origin}`),
+        ". Not installed yet? ",
+        el("a", { href: "/install" }, "Install Pulse"),
+        ".",
+      );
       loadTokens();
     } catch (error) {
       message.className = "error";
@@ -209,7 +263,7 @@ function ownerPanel(me) {
     list,
     el("div", { class: "row" }, nameInput, el("button", { onclick: addToken }, "Connect a computer")),
     message,
-    el("p", { class: "note" }, "Pulse on your computer will ask for this token to send your time here. Recordings never leave your computer unless you submit them."),
+    el("p", { class: "note" }, "Pulse on your computer will ask for this token to send your time here. Recordings never leave your computer unless you submit them. ", el("a", { href: "/install" }, "How to install and connect")),
   );
 }
 
@@ -349,6 +403,7 @@ async function showSubmissions(me) {
 async function start() {
   const me = await api("/api/me");
   renderTop(me);
+  if (location.pathname === "/install") return showInstall(me);
   if (location.pathname === "/submissions") return showSubmissions(me);
   const match = location.pathname.match(/^\/u\/([^/]+)$/);
   if (match) return showProfile(decodeURIComponent(match[1]), me);

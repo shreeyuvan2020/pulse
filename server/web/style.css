@@ -61,3 +61,7 @@ select { font: inherit; background: var(--bg); color: var(--text); border: 1px s
 .project .stats { margin-top: 12px; }
 nav a { text-decoration: none; }
 nav a:hover { color: var(--text); }
+h3 { font-size: 15px; margin: 18px 0 6px; }
+.row.command code.name { font-family: ui-monospace, monospace; font-size: 13px; white-space: normal; overflow: visible; text-overflow: clip; word-break: break-all; min-width: 0; }
+.note code { font-family: ui-monospace, monospace; font-size: 13px; color: var(--text); }
+.note a { color: var(--text); }
