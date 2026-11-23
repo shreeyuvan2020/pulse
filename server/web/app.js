@@ -94,7 +94,7 @@ function showInstall(me) {
     el("h2", {}, "1. Install"),
     el("h3", {}, "macOS"),
     commandBox("curl -fsSL https://raw.githubusercontent.com/shreeyuvan2020/pulse/main/packaging/install.sh | bash"),
-    el("p", { class: "note" }, "This installs Pulse.app into ~/Applications. The app is not signed yet: the first time, right-click it and choose Open. The command line program is at ~/Applications/Pulse.app/Contents/MacOS/pulse."),
+    el("p", { class: "note" }, "This installs Pulse.app into ~/Applications and links a pulse command into ~/.local/bin. If it says Terminal cannot find pulse, run the line it prints, then open a new Terminal window. Pulse is a menu bar app: it has no Dock icon or window, and the icon appears at the top of the screen once the app is open (open ~/Applications/Pulse.app). The app is not signed yet, so the first time, right-click it and choose Open."),
     el("h3", {}, "Windows"),
     el("p", { class: "note" }, el("a", { href: RELEASE }, "Download pulse-windows-x86_64.zip"), ", unzip it, and run pulse.exe from PowerShell in that folder. SmartScreen will warn that the publisher is unknown, because the program is not signed yet: choose \"More info\", then \"Run anyway\"."),
     el("h3", {}, "Linux"),

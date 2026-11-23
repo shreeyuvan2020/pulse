@@ -5,7 +5,7 @@
 #   curl -fsSL <this file> | bash
 #
 # Mac users get Pulse.app in ~/Applications (drag it to Applications to keep
-# it in the menu bar every day). Windows users should use the winget or scoop
+# it in the menu bar every day) and a `pulse` command in ~/.local/bin. Windows users should use the winget or scoop
 # package instead.
 set -eu
 
@@ -46,7 +46,22 @@ if [ "$OS" = "Darwin" ]; then
   mkdir -p "$APPS"
   tar xzf "$TMP/pulse.tar.gz" -C "$APPS"
   echo "pulse-install: installed $APPS/Pulse.app"
-  echo "Open it once to see Pulse in your menu bar, and move it to /Applications if you want it every day."
+  # the program lives inside the app, so link it where a shell can find it
+  mkdir -p "$PREFIX/bin"
+  ln -sf "$APPS/Pulse.app/Contents/MacOS/pulse" "$PREFIX/bin/pulse"
+  echo "pulse-install: linked $PREFIX/bin/pulse"
+  case ":$PATH:" in
+    *":$PREFIX/bin:"*) ;;
+    *)
+      echo
+      echo "Terminal cannot find 'pulse' yet. Run this once, then open a new Terminal window:"
+      echo "  echo 'export PATH=\"$PREFIX/bin:\$PATH\"' >> ~/.zshrc"
+      ;;
+  esac
+  echo
+  echo "Pulse is a menu bar app, so it has no Dock icon or window. Show it in Finder with:"
+  echo "  open -R \"$APPS/Pulse.app\""
+  echo "Then connect it: pulse login <your server address>, and keep 'pulse daemon' running."
   exit 0
 fi
 
