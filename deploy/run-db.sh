@@ -9,6 +9,10 @@ mkdir -p "$SOCK" && chmod 700 "$SOCK"
 if [ ! -f "$DATA/PG_VERSION" ]; then
   "$PG/initdb" -D "$DATA" -U pulse -A trust -E UTF8 --locale=C
 fi
+# Every deploy, the Box re-opens the data directory to group access (2770) so
+# threads on the Box can reach app data. Postgres refuses to start on a
+# directory like that, and the database should not be readable by them anyway.
+chmod 700 "$DATA"
 exec "$PG/postgres" -D "$DATA" \
   -c listen_addresses= \
   -c unix_socket_directories="$SOCK" \
