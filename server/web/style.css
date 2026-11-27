@@ -5,17 +5,17 @@
   font-display: swap;
 }
 :root {
-  --bg: #050505;
-  --dark: #101312;
-  --surface: #111514;
-  --surface-100: #171c1a;
-  --surface-200: #202826;
-  --surface-300: #2b3532;
-  --text: #e8eee9;
-  --muted: #8f9b95;
-  --primary: #d7ff6a;
-  --on-primary: #13160d;
-  --live: #7dfc6a;
+  --bg: #121217;
+  --dark: #17171d;
+  --surface: #18181e;
+  --surface-100: #1e1e24;
+  --surface-200: #2a2a31;
+  --surface-300: #3a3a43;
+  --text: #f5f5f5;
+  --muted: #8492a6;
+  --primary: #ec3750;
+  --on-primary: #ffffff;
+  --live: #33d6a6;
   --danger: #ff7a7a;
   --side: 15.6rem;
 }
