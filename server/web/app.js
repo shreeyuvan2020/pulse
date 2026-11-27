@@ -47,27 +47,42 @@ function ago(unixSeconds) {
 }
 
 function renderTop(me) {
-  const nav = el("nav", {}, el("a", { href: "/install" }, "Install"));
+  const here = location.pathname;
+  const link = (href, text) => el("a", { href, class: here === href ? "active" : "" }, text);
+  const nav = el("nav", {});
+  const side = [el("a", { class: "logo", href: "/" }, "Pu", el("span", {}, "l"), "se")];
   if (me.user) {
-    nav.append(
-      el("a", { href: "/submissions" }, "Submissions"),
-      el("a", { href: `/u/${encodeURIComponent(me.user.username)}` }, `@${me.user.username}`),
-      el("button", { onclick: async () => { await api("/auth/logout", { method: "POST" }); location.assign("/"); } }, "Sign out"),
-    );
+    const profile = `/u/${encodeURIComponent(me.user.username)}`;
+    side.push(el("a", { class: "me", href: profile },
+      el("span", { class: "avatar" }, me.user.username.slice(0, 1)),
+      el("div", {}, el("b", {}, me.user.username), el("small", {}, "View profile"))));
+    nav.append(link(profile, "Dashboard"), link("/submissions", "Submissions"), link("/install", "Install"),
+      el("span", { class: "gap" }),
+      el("button", { onclick: async () => { await api("/auth/logout", { method: "POST" }); location.assign("/"); } }, "Sign out"));
   } else {
-    nav.append(el("a", { class: "button primary", href: "/auth/login" }, "Sign in with Hack Club"));
+    nav.append(link("/", "Home"), link("/install", "Install"), el("span", { class: "gap" }),
+      el("a", { class: "button primary", href: "/auth/login" }, "Sign in with Hack Club"));
   }
-  topBar.replaceChildren(el("a", { class: "logo", href: "/" }, "Pu", el("span", {}, "l"), "se"), nav);
+  side.push(nav, el("div", { class: "foot" }, "Open source, AGPLv3 · ", el("a", { href: "https://github.com/shreeyuvan2020/pulse", rel: "noopener noreferrer" }, "GitHub")));
+  topBar.replaceChildren(...side);
+
+  const burger = document.getElementById("burger");
+  const setMenu = (open) => {
+    document.body.classList.toggle("menu-open", open);
+    burger.setAttribute("aria-expanded", String(open));
+  };
+  burger.onclick = () => setMenu(!document.body.classList.contains("menu-open"));
+  document.getElementById("scrim").onclick = () => setMenu(false);
 }
 
 function landing() {
   view.replaceChildren(
     el("div", { class: "hero" },
-      el("h1", {}, "See the time you put into building with AI."),
+      el("h1", {}, "See the time you put into ", el("span", { class: "hl" }, "building with AI"), "."),
       el("p", {}, "Pulse counts the hours you spend in the loop with a coding agent: prompting, reading, reviewing and steering. It runs quietly in the background and keeps your recordings on your own computer."),
-      el("a", { class: "button primary", href: "/auth/login" }, "Sign in with Hack Club"),
-      " ",
-      el("a", { class: "button", href: "/install" }, "Install Pulse"),
+      el("div", { class: "actions" },
+        el("a", { class: "button primary", href: "/auth/login" }, "Sign in with Hack Club"),
+        el("a", { class: "button", href: "/install" }, "Install Pulse")),
     ),
   );
 }
@@ -136,7 +151,7 @@ function chart(days) {
     bar.append(title);
     svg.append(bar);
   });
-  return el("div", { class: "chart" }, svg, el("div", { class: "axis" }, el("span", {}, days[0].date), el("span", {}, "today (UTC)")));
+  return el("div", { class: "chart" }, el("h2", {}, "Last 30 days"), svg, el("div", { class: "axis" }, el("span", {}, days[0].date), el("span", {}, "today (UTC)")));
 }
 
 function projectRow(project, total, isOwner, reload) {
@@ -146,7 +161,7 @@ function projectRow(project, total, isOwner, reload) {
     ? el("span", { class: "name" },
         linkable ? el("a", { href: project.url, target: "_blank", rel: "noopener noreferrer" }, project.name) : project.name)
     : el("span", { class: "name private" }, "Private project");
-  const share = el("div", { class: "bar" });
+  const share = el("div", { class: "bar" }, duration(project.seconds));
   share.style.width = `${Math.max(2, (project.seconds / Math.max(total, 1)) * 100)}%`;
   const toggle = isOwner
     ? el("label", {}, el("input", {
@@ -159,35 +174,41 @@ function projectRow(project, total, isOwner, reload) {
       }), "show name")
     : null;
   const pushed = project.pushes > 0 && project.last_push_at
-    ? el("div", { class: "note" }, `${project.pushes} ${project.pushes === 1 ? "push" : "pushes"} to GitHub · last ${ago(project.last_push_at)}`)
+    ? el("span", { class: "note" }, `${project.pushes} ${project.pushes === 1 ? "push" : "pushes"} · last ${ago(project.last_push_at)}`)
     : null;
-  return el("div", { class: "project" }, el("div", { class: "line" }, label, toggle, el("span", { class: "time" }, duration(project.seconds))), pushed, share);
+  return el("div", { class: "bar-row" }, el("div", { class: "line" }, label, pushed, toggle), el("div", { class: "bar-track" }, share));
 }
 
 function renderProfile(data, reload) {
   const total = data.projects.reduce((sum, project) => sum + project.seconds, 0);
+  const mine = data.is_owner;
+  const today = data.today_seconds > 0
+    ? el("p", { class: "lede" }, mine ? "Today, you've logged " : "Today: ", el("b", {}, duration(data.today_seconds)), data.projects.length > 1 ? ` across ${data.projects.length} projects.` : ".")
+    : el("p", { class: "lede" }, mine ? "Nothing logged yet today. Even five minutes counts." : "Nothing logged yet today.");
   const section = el("section", {},
-    el("h1", {}, data.display_name),
-    el("div", { class: "handle" }, `@${data.username}`),
+    el("p", { class: "flavor" }, mine ? "Every minute you spend steering an agent counts." : `@${data.username}`),
+    mine
+      ? el("h1", {}, "Keep Track of ", el("span", { class: "hl" }, "Your"), " Building Time")
+      : el("h1", {}, el("span", { class: "hl" }, data.display_name), "'s Building Time"),
+    today,
     data.building_now
       ? el("div", { class: "live" }, data.building_project ? `Building now · ${data.building_project}` : "Building now")
       : null,
     el("div", { class: "stats" },
-      el("div", { class: "stat" }, el("b", {}, duration(data.total_seconds)), el("span", {}, "all time")),
-      el("div", { class: "stat" }, el("b", {}, duration(data.today_seconds)), el("span", {}, "today")),
-      el("div", { class: "stat" }, el("b", {}, `${data.current_streak} d`), el("span", {}, "current streak")),
-      el("div", { class: "stat" }, el("b", {}, `${data.longest_streak} d`), el("span", {}, "longest streak")),
+      el("div", { class: "stat hot" }, el("span", {}, "All time"), el("b", {}, duration(data.total_seconds))),
+      el("div", { class: "stat" }, el("span", {}, "Today"), el("b", {}, duration(data.today_seconds))),
+      el("div", { class: "stat" }, el("span", {}, "Current streak"), el("b", {}, `${data.current_streak} d`)),
+      el("div", { class: "stat" }, el("span", {}, "Longest streak"), el("b", {}, `${data.longest_streak} d`)),
     ),
-    el("h2", {}, "Last 30 days"),
     chart(data.days),
-    el("h2", {}, "Projects"),
-    data.projects.length
-      ? data.projects.map((project) => projectRow(project, total, data.is_owner, reload))
-      : el("p", { class: "empty-note" }, "No time logged yet."),
+    el("div", { class: "panel" }, el("h2", {}, "Projects"),
+      data.projects.length
+        ? data.projects.map((project) => projectRow(project, total, data.is_owner, reload))
+        : el("p", { class: "empty-note" }, "No time logged yet.")),
   );
   const tools = [...data.harnesses, ...data.models];
   if (tools.length) {
-    section.append(el("h2", {}, "Built with"), el("div", { class: "chips" }, tools.map((tool) => el("span", { class: "chip" }, tool))));
+    section.append(el("div", { class: "panel" }, el("h2", {}, "Built with"), el("div", { class: "chips" }, tools.map((tool) => el("span", { class: "chip" }, tool)))));
   }
   return section;
 }
@@ -210,7 +231,7 @@ function githubSection(me) {
   } else {
     body.push(el("p", { class: "empty-note" }, "Connecting GitHub is not set up on this server."));
   }
-  return el("div", {}, el("h2", {}, "GitHub"), body);
+  return el("div", { class: "panel" }, el("h2", {}, "GitHub"), body);
 }
 
 function ownerPanel(me) {
@@ -252,18 +273,20 @@ function ownerPanel(me) {
 
   loadTokens();
   return el("section", {},
-    el("h2", {}, "Privacy"),
-    el("label", { class: "note" }, el("input", {
-      type: "checkbox",
-      checked: me.user.profile_public,
-      onchange: async (event) => { await api("/api/me", { method: "PATCH", body: { profile_public: event.target.checked } }); },
-    }), " Anyone can see this profile. Project names stay hidden until you show them."),
+    el("div", { class: "panel" },
+      el("h2", {}, "Privacy"),
+      el("label", { class: "note" }, el("input", {
+        type: "checkbox",
+        checked: me.user.profile_public,
+        onchange: async (event) => { await api("/api/me", { method: "PATCH", body: { profile_public: event.target.checked } }); },
+      }), " Anyone can see this profile. Project names stay hidden until you show them.")),
     githubSection(me),
-    el("h2", {}, "Computers"),
-    list,
-    el("div", { class: "row" }, nameInput, el("button", { onclick: addToken }, "Connect a computer")),
-    message,
-    el("p", { class: "note" }, "Pulse on your computer will ask for this token to send your time here. Recordings never leave your computer unless you submit them. ", el("a", { href: "/install" }, "How to install and connect")),
+    el("div", { class: "panel" },
+      el("h2", {}, "Computers"),
+      list,
+      el("div", { class: "row" }, nameInput, el("button", { onclick: addToken }, "Connect a computer")),
+      message,
+      el("p", { class: "note" }, "Pulse on your computer will ask for this token to send your time here. Recordings never leave your computer unless you submit them. ", el("a", { href: "/install" }, "How to install and connect"))),
   );
 }
 
@@ -305,10 +328,10 @@ function submissionCard(submission, reload) {
   const facts = [];
   if (submission.status === "submitted") {
     facts.push(
-      el("div", { class: "stat" }, el("b", {}, duration(submission.recorded_seconds ?? 0)), el("span", {}, "recorded")),
-      el("div", { class: "stat" }, el("b", {}, duration(submission.active_seconds ?? 0)), el("span", {}, "active")),
-      el("div", { class: "stat" }, el("b", {}, duration(submission.claimed_seconds ?? 0)), el("span", {}, "on your profile")),
-      el("div", { class: "stat" }, el("b", {}, duration(submission.omitted_seconds ?? 0)), el("span", {}, "left out")),
+      el("div", { class: "stat" }, el("span", {}, "recorded"), el("b", {}, duration(submission.recorded_seconds ?? 0))),
+      el("div", { class: "stat" }, el("span", {}, "active"), el("b", {}, duration(submission.active_seconds ?? 0))),
+      el("div", { class: "stat" }, el("span", {}, "on your profile"), el("b", {}, duration(submission.claimed_seconds ?? 0))),
+      el("div", { class: "stat" }, el("span", {}, "left out"), el("b", {}, duration(submission.omitted_seconds ?? 0))),
     );
   }
   const looks = submission.views.length
@@ -376,9 +399,9 @@ async function showSubmissions(me) {
     sections.push(el("h2", {}, "Your recordings"));
     sections.push(recordings.seconds > 0
       ? el("div", { class: "stats" },
-          el("div", { class: "stat" }, el("b", {}, duration(recordings.seconds)), el("span", {}, "recorded and registered")),
-          el("div", { class: "stat" }, el("b", {}, duration(recordings.submitted_seconds)), el("span", {}, "already submitted")),
-          el("div", { class: "stat" }, el("b", {}, duration(recordings.seconds - recordings.submitted_seconds)), el("span", {}, "ready to submit")))
+          el("div", { class: "stat" }, el("span", {}, "recorded and registered"), el("b", {}, duration(recordings.seconds))),
+          el("div", { class: "stat" }, el("span", {}, "already submitted"), el("b", {}, duration(recordings.submitted_seconds))),
+          el("div", { class: "stat" }, el("span", {}, "ready to submit"), el("b", {}, duration(recordings.seconds - recordings.submitted_seconds))))
       : el("p", { class: "empty-note" }, "Nothing registered yet. Recordings are made while a coding agent session is open, and their fingerprints reach this server shortly after, once `pulse daemon` runs and this computer is connected."));
 
     sections.push(el("h2", {}, "Submit"));

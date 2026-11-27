@@ -11,6 +11,8 @@ use crate::state::AppState;
 const PAGE: &str = include_str!("../web/index.html");
 const SCRIPT: &str = include_str!("../web/app.js");
 const STYLE: &str = include_str!("../web/style.css");
+/// Spline Sans, SIL Open Font License (the license text sits next to the file).
+const FONT: &[u8] = include_bytes!("../web/fonts/spline-sans.woff2");
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -28,6 +30,18 @@ pub fn routes() -> Router<AppState> {
             }),
         )
         .route(
+            "/fonts/spline-sans.woff2",
+            get(|| async {
+                (
+                    [
+                        (header::CONTENT_TYPE, "font/woff2"),
+                        (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                    ],
+                    FONT,
+                )
+            }),
+        )
+        .route(
             "/style.css",
             get(|| async { ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], STYLE) }),
         )
@@ -40,7 +54,7 @@ pub async fn security_headers(mut response: Response) -> Response {
     for (name, value) in [
         (
             header::CONTENT_SECURITY_POLICY,
-            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; \
+            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; \
              connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
         ),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
