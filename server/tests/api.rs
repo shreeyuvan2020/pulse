@@ -262,6 +262,78 @@ async fn logged_time_appears_on_the_profile_and_names_stay_hidden_until_shown() 
 }
 
 #[tokio::test]
+async fn the_front_page_adds_up_public_profiles_only_and_names_no_one() {
+    let Some(h) = harness(|_| {}).await else {
+        return;
+    };
+    let rowan = h.sign_in("rowan").await;
+    let sam = h.sign_in("sam").await;
+    let quiet = h.sign_in("quiet").await;
+    let (_, rowan_token) = h.new_token(&rowan, "laptop").await;
+    let (_, sam_token) = h.new_token(&sam, "laptop").await;
+    let (_, quiet_token) = h.new_token(&quiet, "laptop").await;
+    let credit = |project: &str, seconds: i64, source: &str, model: &str| {
+        json!([{ "project": project, "slot": past_slot(0), "seconds": seconds,
+                 "sources": [source], "models": [model] }])
+    };
+    h.send(
+        &rowan_token,
+        credit("secret-project", 200, "claude-code", "opus"),
+    )
+    .await;
+    h.send(
+        &sam_token,
+        credit("other-project", 100, "claude-code", "gpt"),
+    )
+    .await;
+    h.send(
+        &quiet_token,
+        credit("hidden-project", 300, "codex", "hidden-model"),
+    )
+    .await;
+    let hidden = h
+        .call(
+            "PATCH",
+            "/api/me",
+            &Harness::browser(&quiet),
+            Some(json!({ "profile_public": false })),
+        )
+        .await;
+    assert_eq!(hidden.status, StatusCode::NO_CONTENT);
+
+    // no sign-in needed
+    let reply = h.call("GET", "/api/stats", &[], None).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let stats = reply.json();
+    assert_eq!(
+        stats["total_seconds"], 300,
+        "the private profile's time stays out"
+    );
+    assert_eq!(stats["builders"], 2);
+    assert_eq!(stats["projects"], 2);
+    assert_eq!(stats["building_now"], 2);
+    assert_eq!(stats["days"].as_array().unwrap().len(), 30);
+    assert_eq!(stats["days"][29]["seconds"], 300);
+    assert_eq!(stats["week_seconds"], 300);
+    assert_eq!(
+        stats["harnesses"],
+        json!([{ "name": "claude-code", "builders": 2 }])
+    );
+    let body = String::from_utf8_lossy(&reply.body).to_string();
+    for name in [
+        "rowan",
+        "sam",
+        "quiet",
+        "secret-project",
+        "hidden-model",
+        "codex",
+    ] {
+        assert!(!body.contains(name), "{name} must not appear: {body}");
+    }
+    h.finish().await;
+}
+
+#[tokio::test]
 async fn one_person_never_logs_more_than_five_minutes_in_a_five_minute_slot() {
     let Some(h) = harness(|_| {}).await else {
         return;

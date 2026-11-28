@@ -75,7 +75,48 @@ function renderTop(me) {
   document.getElementById("scrim").onclick = () => setMenu(false);
 }
 
+// big totals read as whole hours ("1,204 h"); short ones keep their minutes
+function hours(seconds) {
+  if (seconds < 60) return "0m";
+  return seconds >= 3600 ? `${Math.floor(seconds / 3600).toLocaleString()} h` : duration(seconds);
+}
+
+function toolList(title, tools) {
+  const top = Math.max(...tools.map((tool) => tool.builders), 1);
+  return el("div", { class: "panel" }, el("h2", {}, title),
+    tools.map((tool) => {
+      const bar = el("div", { class: "bar" }, `${tool.builders} ${tool.builders === 1 ? "builder" : "builders"}`);
+      bar.style.width = `${Math.max(2, (tool.builders / top) * 100)}%`;
+      return el("div", { class: "bar-row" }, el("div", { class: "line" }, el("span", { class: "name" }, tool.name)), el("div", { class: "bar-track" }, bar));
+    }));
+}
+
+function communityStats(stats) {
+  const card = (label, value, hot) => el("div", { class: hot ? "stat hot" : "stat" }, el("span", {}, label), el("b", {}, value));
+  const parts = [
+    el("div", { class: "stats" },
+      card("Hours logged", hours(stats.total_seconds), true),
+      card("This week", hours(stats.week_seconds)),
+      card("Builders", stats.builders.toLocaleString()),
+      card("Building right now", stats.building_now.toLocaleString())),
+    el("div", { class: "stats" },
+      card("Today", hours(stats.today_seconds)),
+      card("Active this week", stats.builders_week.toLocaleString()),
+      card("Projects", stats.projects.toLocaleString()),
+      card("Avg per builder", stats.builders ? hours(Math.round(stats.total_seconds / stats.builders)) : "0s")),
+    chart(stats.days, "Everyone, last 30 days"),
+  ];
+  if (stats.harnesses.length || stats.models.length) {
+    parts.push(el("div", { class: "two" },
+      stats.harnesses.length ? toolList("Agents people use", stats.harnesses) : null,
+      stats.models.length ? toolList("Models people use", stats.models) : null));
+  }
+  parts.push(el("p", { class: "note" }, "Counts people with a public profile. No names, just totals."));
+  return parts;
+}
+
 function landing() {
+  const numbers = el("div");
   view.replaceChildren(
     el("div", { class: "hero" },
       el("h1", {}, "See the time you put into ", el("span", { class: "hl" }, "building with AI"), "."),
@@ -84,7 +125,13 @@ function landing() {
         el("a", { class: "button primary", href: "/auth/login" }, "Sign in with Hack Club"),
         el("a", { class: "button", href: "/install" }, "Install Pulse")),
     ),
+    numbers,
   );
+  async function load() {
+    try { numbers.replaceChildren(...communityStats(await api("/api/stats"))); } catch { /* the numbers are a bonus: leave the page as it is */ }
+  }
+  load();
+  setInterval(load, 60000);
 }
 
 // a command in a box with a copy button
@@ -131,7 +178,7 @@ function showInstall(me) {
   );
 }
 
-function chart(days) {
+function chart(days, title = "Last 30 days") {
   const max = Math.max(...days.map((day) => day.seconds), 1);
   const svg = document.createElementNS(SVG, "svg");
   svg.setAttribute("viewBox", "0 0 600 110");
@@ -151,7 +198,7 @@ function chart(days) {
     bar.append(title);
     svg.append(bar);
   });
-  return el("div", { class: "chart" }, el("h2", {}, "Last 30 days"), svg, el("div", { class: "axis" }, el("span", {}, days[0].date), el("span", {}, "today (UTC)")));
+  return el("div", { class: "chart" }, el("h2", {}, title), svg, el("div", { class: "axis" }, el("span", {}, days[0].date), el("span", {}, "today (UTC)")));
 }
 
 function projectRow(project, total, isOwner, reload) {

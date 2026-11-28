@@ -1,8 +1,10 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde::Serialize;
+use serde_json::Value;
 use sqlx::PgPool;
-use tokio::sync::broadcast;
+use tokio::sync::{Mutex, broadcast};
 
 use crate::config::Config;
 use crate::storage::Storage;
@@ -14,6 +16,9 @@ pub struct AppState {
     pub storage: Option<Storage>,
     pub http: reqwest::Client,
     pub live: broadcast::Sender<CreditEvent>,
+    /// The front page's community numbers and when they were counted, so a
+    /// busy front page costs one count a minute, not one per visitor.
+    pub site_stats: Arc<Mutex<Option<(Instant, Value)>>>,
 }
 
 impl AppState {
@@ -29,6 +34,7 @@ impl AppState {
                 .expect("http client"),
             // dashboards that fall behind just refetch, so a small buffer is fine
             live: broadcast::channel(256).0,
+            site_stats: Arc::default(),
         }
     }
 }

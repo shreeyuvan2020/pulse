@@ -23,6 +23,8 @@ const BACKFILL_SECONDS: i64 = 604_800;
 const MAX_PROJECTS: i64 = 500;
 const MAX_TOKENS: i64 = 20;
 const MAX_CREDITS_PER_REQUEST: usize = 300;
+/// How long the front page's numbers are reused: 60 seconds.
+const SITE_STATS_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -32,6 +34,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/projects/{id}", patch(update_project))
         .route("/api/credits", post(ingest))
         .route("/api/users/{username}", get(profile))
+        .route("/api/stats", get(site_stats))
 }
 
 async fn me(State(state): State<AppState>, OptionalUser(user): OptionalUser) -> Json<Value> {
@@ -514,4 +517,81 @@ mod tests {
         odd.project = "bad\nname".into();
         assert!(validate(&odd, now).is_err());
     }
+}
+
+/// Numbers for the front page: everyone's time added together. Only people with
+/// a public profile count, so a private profile stays as absent here as it is
+/// everywhere else, and nothing in the reply names a person or a project.
+async fn site_stats(State(state): State<AppState>) -> Result<Json<Value>, AppError> {
+    let mut cached = state.site_stats.lock().await;
+    if let Some((counted_at, stats)) = cached.as_ref()
+        && counted_at.elapsed() < SITE_STATS_TTL
+    {
+        return Ok(Json(stats.clone()));
+    }
+    let now = now();
+    let today = now / DAY;
+
+    let totals = sqlx::query(
+        "select coalesce(sum(c.seconds), 0)::bigint as seconds, \
+                count(distinct c.user_id)::bigint as builders, \
+                count(distinct c.user_id) filter (where c.slot >= $1)::bigint as builders_week, \
+                count(distinct c.user_id) filter (where c.updated_at > $2)::bigint as building_now, \
+                count(distinct c.project_id)::bigint as projects \
+         from credits c join users u on u.id = c.user_id where u.profile_public",
+    )
+    .bind((today - 6) * DAY)
+    .bind(now - 120) // "building now": time was logged in the last 2 minutes
+    .fetch_one(&state.db)
+    .await?;
+
+    let daily: BTreeMap<i64, i64> = sqlx::query(
+        "select c.slot / 86400 as day, sum(c.seconds)::bigint as seconds \
+         from credits c join users u on u.id = c.user_id \
+         where u.profile_public and c.slot >= $1 group by 1",
+    )
+    .bind((today - 29) * DAY)
+    .fetch_all(&state.db)
+    .await?
+    .iter()
+    .map(|row| (row.get::<i64, _>("day"), row.get::<i64, _>("seconds")))
+    .collect();
+    let days: Vec<Value> = (today - 29..=today)
+        .map(|day| json!({ "date": stats::date_string(day), "seconds": daily.get(&day).copied().unwrap_or(0) }))
+        .collect();
+    let week_seconds: i64 = (today - 6..=today).filter_map(|day| daily.get(&day)).sum();
+
+    // how many people used each agent and model, most used first
+    let tools = |column: &'static str| {
+        let state = state.clone();
+        async move {
+            let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "select label, count(distinct c.user_id)::bigint as builders \
+                 from credits c join users u on u.id = c.user_id, unnest(c.{column}) as label \
+                 where u.profile_public group by label order by builders desc, label limit 8"
+            )))
+            .fetch_all(&state.db)
+            .await?;
+            Ok::<_, AppError>(
+                rows.iter()
+                    .map(|row| json!({ "name": row.get::<String, _>("label"), "builders": row.get::<i64, _>("builders") }))
+                    .collect::<Vec<Value>>(),
+            )
+        }
+    };
+
+    let stats = json!({
+        "total_seconds": totals.get::<i64, _>("seconds"),
+        "week_seconds": week_seconds,
+        "today_seconds": daily.get(&today).copied().unwrap_or(0),
+        "builders": totals.get::<i64, _>("builders"),
+        "builders_week": totals.get::<i64, _>("builders_week"),
+        "building_now": totals.get::<i64, _>("building_now"),
+        "projects": totals.get::<i64, _>("projects"),
+        "days": days,
+        "harnesses": tools("sources").await?,
+        "models": tools("models").await?,
+    });
+    *cached = Some((std::time::Instant::now(), stats.clone()));
+    Ok(Json(stats))
 }

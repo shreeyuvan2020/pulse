@@ -89,6 +89,9 @@ h3 { font-size: 1rem; margin: 1.2rem 0 0.4rem; }
 .live::before { content: ""; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--live); animation: pulse 1.6s infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }
 
+/* two panels side by side */
+.two { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+
 /* bar lists */
 .bar-row { margin-bottom: 0.9rem; }
 .bar-row:last-child { margin-bottom: 0; }
@@ -121,7 +124,7 @@ h3 { font-size: 1rem; margin: 1.2rem 0 0.4rem; }
 .looks { margin-top: 0.5rem; }
 .project .stats { margin-top: 0.75rem; }
 
-@media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } .two { grid-template-columns: 1fr; } }
 @media (max-width: 767px) {
   .mobile-bar { display: flex; align-items: center; gap: 0.75rem; position: fixed; inset: 0 0 auto 0; height: 3.5rem; padding: 0 0.9rem; background: var(--dark); z-index: 20; }
   .mobile-bar .logo { padding: 0; }
