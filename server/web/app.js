@@ -146,7 +146,7 @@ function commandBox(text) {
   return el("div", { class: "row command" }, el("code", { class: "name" }, text), copy);
 }
 
-const RELEASE = "https://github.com/shreeyuvan2020/pulse/releases/tag/v0.1.0";
+const RELEASE = "https://github.com/shreeyuvan2020/pulse/releases/tag/v0.1.1";
 
 function showInstall(me) {
   const server = location.origin;
@@ -160,9 +160,8 @@ function showInstall(me) {
     el("h3", {}, "Windows"),
     el("p", { class: "note" }, el("a", { href: RELEASE }, "Download pulse-windows-x86_64.zip"), ", unzip it, and run pulse.exe from PowerShell in that folder. SmartScreen will warn that the publisher is unknown, because the program is not signed yet: choose \"More info\", then \"Run anyway\"."),
     el("h3", {}, "Linux"),
-    el("p", { class: "note" }, "The v0.1.0 download for Linux cannot record, so build from source for now (needs Rust 1.89 or newer; the Wayland helper also needs libpipewire-0.3-dev and libclang-dev):"),
-    commandBox("git clone https://github.com/shreeyuvan2020/pulse && cd pulse && cargo build --release -p pulse -p pulse-wayland"),
-    el("p", { class: "note" }, "The programs are in target/release. Put pulse and pulse-wayland in the same folder."),
+    commandBox("curl -fsSL https://raw.githubusercontent.com/shreeyuvan2020/pulse/main/packaging/install.sh | bash"),
+    el("p", { class: "note" }, "This installs pulse and the Wayland helper pulse-wayland into ~/.local/bin. Debian and Ubuntu 22.04 or newer can use the ", el("a", { href: RELEASE }, ".deb from the release page"), " instead. Recording works on X11 and, on recent systems (Ubuntu 24.04, Debian 13, Fedora 40 or newer), on Wayland."),
     el("h2", {}, "2. Connect it to your account"),
     el("p", { class: "note" }, me.user
       ? ["Make a token in the Computers section of ", el("a", { href: `/u/${encodeURIComponent(me.user.username)}` }, "your profile"), ", then run this and paste the token when it asks:"]
