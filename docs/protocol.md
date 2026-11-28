@@ -12,7 +12,7 @@ Every adapter produces the same event, stored one per line in `events/YYYY-MM-DD
 |---|---|
 | `v` | Protocol version, `1`. |
 | `t` | Unix time in whole seconds (UTC). |
-| `source` | Adapter id, such as `claude-code` or `codex`. |
+| `source` | Adapter id, such as `claude-code`, `codex` or `opencode`. |
 | `session` | The harness's session id. Turns are followed within a session. |
 | `project` | Normalized project id: the `origin` remote as `host/owner/repo` (credentials stripped), or `local/<folder>` without one. |
 | `kind` | One of the kinds below. |

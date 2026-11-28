@@ -8,7 +8,7 @@ Pulse counts the time **you** spend in the loop with a coding agent: prompting, 
 
 ## How it works
 
-- **Adapters** turn what coding agents already write into events: Claude Code hooks or transcripts, and Codex CLI session files. More adapters will follow, and any tool can send events itself (see [docs/protocol.md](docs/protocol.md)).
+- **Adapters** turn what coding agents already write into events: Claude Code hooks or transcripts, Codex CLI session files, and OpenCode through a small plugin (`pulse install opencode`) that reports only session ids, folders and the model name. More adapters will follow, and any tool can send events itself (see [docs/protocol.md](docs/protocol.md)).
 - The **OS idle timer** tells Pulse whether you are at the computer. It is a single "seconds since last input" number: Pulse never sees which keys you press.
 - **Attribution** credits a second to a project when you are present and its agent session is open, giving the second to the project you touched most recently, so parallel agents never multiply your hours. The rules are in [docs/protocol.md](docs/protocol.md#attribution).
 

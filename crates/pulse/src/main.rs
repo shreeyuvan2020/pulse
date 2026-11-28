@@ -15,6 +15,7 @@ mod tray;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod wayland;
 
+use std::fs;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 use std::process::ExitCode;
@@ -137,6 +138,7 @@ enum Command {
 #[derive(Clone, Copy, ValueEnum)]
 enum Adapter {
     ClaudeCode,
+    Opencode,
 }
 
 #[derive(Subcommand)]
@@ -250,9 +252,16 @@ fn main() -> ExitCode {
             adapter: Adapter::ClaudeCode,
             yes,
         } => install_claude(yes),
+        Command::Install {
+            adapter: Adapter::Opencode,
+            yes,
+        } => install_opencode(yes),
         Command::Uninstall {
             adapter: Adapter::ClaudeCode,
         } => uninstall_claude(),
+        Command::Uninstall {
+            adapter: Adapter::Opencode,
+        } => uninstall_opencode(),
         Command::Today { json } => {
             print_report(&store, Local::now().date_naive(), json);
             Ok(())
@@ -333,6 +342,7 @@ fn run_hook(store: &Store, adapter: Adapter) -> Result<(), Box<dyn std::error::E
     let payload: serde_json::Value = serde_json::from_str(&input)?;
     let event = match adapter {
         Adapter::ClaudeCode => adapters::claude_code::from_hook(&payload, now(), &project::resolve),
+        Adapter::Opencode => adapters::opencode::from_hook(&payload, now(), &project::resolve),
     };
     if let Some(event) = event {
         store.append_event(&event)?;
@@ -432,6 +442,64 @@ fn uninstall_claude() -> Result<(), String> {
     Ok(())
 }
 
+fn opencode_plugin_path() -> Result<std::path::PathBuf, String> {
+    paths::opencode_config_dir()
+        .map(|dir| dir.join("plugins").join(adapters::opencode::PLUGIN_FILE))
+        .ok_or_else(|| "cannot find your home directory".into())
+}
+
+/// Whether the file at `path` is a plugin Pulse wrote.
+fn is_pulse_plugin(path: &Path) -> bool {
+    fs::read_to_string(path).is_ok_and(|text| text.starts_with(adapters::opencode::PLUGIN_MARKER))
+}
+
+fn install_opencode(yes: bool) -> Result<(), String> {
+    let path = opencode_plugin_path()?;
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let source = adapters::opencode::plugin_source(&exe.to_string_lossy());
+    if path.exists() && !is_pulse_plugin(&path) {
+        return Err(format!(
+            "{} exists and Pulse did not write it, so it is left alone",
+            path.display()
+        ));
+    }
+    if fs::read_to_string(&path).is_ok_and(|current| current == source) {
+        println!("Pulse's OpenCode plugin is already installed.");
+        return Ok(());
+    }
+    println!("Pulse will add an OpenCode plugin at {}.", path.display());
+    println!(
+        "The plugin records when you prompt and when the agent works. It never reads your prompts or code."
+    );
+    if !yes && !confirm("Continue?")? {
+        println!("Nothing changed.");
+        return Ok(());
+    }
+    if let Some(folder) = path.parent() {
+        fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+    }
+    fs::write(&path, source).map_err(|error| error.to_string())?;
+    println!("Installed. Restart OpenCode if it is running.");
+    Ok(())
+}
+
+fn uninstall_opencode() -> Result<(), String> {
+    let path = opencode_plugin_path()?;
+    if !path.exists() {
+        println!("Pulse's OpenCode plugin is not installed.");
+        return Ok(());
+    }
+    if !is_pulse_plugin(&path) {
+        return Err(format!(
+            "{} exists and Pulse did not write it, so it is left alone",
+            path.display()
+        ));
+    }
+    fs::remove_file(&path).map_err(|error| error.to_string())?;
+    println!("Removed {}.", path.display());
+    Ok(())
+}
+
 fn confirm(question: &str) -> Result<bool, String> {
     print!("{question} [y/N] ");
     io::stdout().flush().map_err(|error| error.to_string())?;
@@ -518,6 +586,17 @@ fn print_status(store: &Store) {
             }
         ),
     }
+    let opencode_installed = opencode_plugin_path().is_ok_and(|path| is_pulse_plugin(&path));
+    let opencode_state = match (
+        exists(paths::opencode_config_dir().as_deref())
+            || exists(paths::opencode_data_dir().as_deref()),
+        opencode_installed,
+    ) {
+        (_, true) => "plugin installed",
+        (true, false) => "found (run `pulse install opencode` to track it)",
+        (false, false) => "not found",
+    };
+    println!("OpenCode: {opencode_state}");
     let codex = paths::codex_dir().map(|dir| dir.join("sessions"));
     println!(
         "Codex: {}",

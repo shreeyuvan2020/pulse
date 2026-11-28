@@ -22,3 +22,19 @@ pub fn codex_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))
 }
+
+/// OpenCode's config folder, where its plugins live. It uses `~/.config` on
+/// every system, not the platform's own config folder.
+pub fn opencode_config_dir() -> Option<PathBuf> {
+    env::var_os("OPENCODE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("XDG_CONFIG_HOME").map(|dir| PathBuf::from(dir).join("opencode")))
+        .or_else(|| dirs::home_dir().map(|home| home.join(".config").join("opencode")))
+}
+
+/// Where OpenCode keeps its sessions, used only to notice it is installed.
+pub fn opencode_data_dir() -> Option<PathBuf> {
+    env::var_os("XDG_DATA_HOME")
+        .map(|dir| PathBuf::from(dir).join("opencode"))
+        .or_else(|| dirs::home_dir().map(|home| home.join(".local").join("share").join("opencode")))
+}
