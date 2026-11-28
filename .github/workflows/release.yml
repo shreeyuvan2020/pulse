@@ -177,4 +177,4 @@ jobs:
             - macOS: `pulse-macos-universal.tar.gz` (contains Pulse.app, Apple Silicon and Intel)
             - Windows: `pulse-windows-x86_64.zip`
 
-            Install: `curl -fsSL https://raw.githubusercontent.com/shreeyuvan2020/pulse/v0.1.0/packaging/install.sh | bash`
+            Install: `curl -fsSL https://raw.githubusercontent.com/shreeyuvan2020/pulse/${{ github.ref_name }}/packaging/install.sh | bash`
