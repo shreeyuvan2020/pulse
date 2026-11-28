@@ -2856,7 +2856,7 @@ dependencies = [
 
 [[package]]
 name = "pulse"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "block2 0.6.2",
  "bzip2",
@@ -2889,7 +2889,7 @@ dependencies = [
 
 [[package]]
 name = "pulse-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -2898,7 +2898,7 @@ dependencies = [
 
 [[package]]
 name = "pulse-server"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "axum",
  "axum-extra",
@@ -2925,7 +2925,7 @@ dependencies = [
 
 [[package]]
 name = "pulse-wayland"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "ashpd",
  "async-io",

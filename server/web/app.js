@@ -146,7 +146,7 @@ function commandBox(text) {
   return el("div", { class: "row command" }, el("code", { class: "name" }, text), copy);
 }
 
-const RELEASE = "https://github.com/shreeyuvan2020/pulse/releases/tag/v0.1.1";
+const RELEASE = "https://github.com/shreeyuvan2020/pulse/releases/tag/v0.1.2";
 
 function showInstall(me) {
   const server = location.origin;
