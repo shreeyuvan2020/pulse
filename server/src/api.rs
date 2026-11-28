@@ -485,40 +485,6 @@ async fn profile(
     })))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn credit(slot: i64, seconds: i32) -> CreditIn {
-        CreditIn {
-            project: "github.com/o/r".into(),
-            slot,
-            seconds,
-            prompts: 0,
-            sources: vec![],
-            models: vec![],
-        }
-    }
-
-    #[test]
-    fn rejects_time_that_cannot_have_happened() {
-        let slot = 1_000_000_200; // a multiple of 300
-        let now = slot + 100; // 100 seconds into the slot
-        assert!(validate(&credit(slot - 300, 300), now).is_ok());
-        // 100 seconds have passed; 5 more are allowed for clock drift
-        assert!(validate(&credit(slot, 105), now).is_ok());
-        assert!(validate(&credit(slot, 106), now).is_err());
-        assert!(validate(&credit(slot + 300, 1), now).is_err());
-        assert!(validate(&credit(slot - 1, 1), now).is_err());
-        assert!(validate(&credit(slot - 300, 0), now).is_err());
-        assert!(validate(&credit(slot - 300, 301), now).is_err());
-        assert!(validate(&credit(slot - BACKFILL_SECONDS - 300, 10), now).is_err());
-        let mut odd = credit(slot - 300, 10);
-        odd.project = "bad\nname".into();
-        assert!(validate(&odd, now).is_err());
-    }
-}
-
 /// Numbers for the front page: everyone's time added together. Only people with
 /// a public profile count, so a private profile stays as absent here as it is
 /// everywhere else, and nothing in the reply names a person or a project.
@@ -594,4 +560,38 @@ async fn site_stats(State(state): State<AppState>) -> Result<Json<Value>, AppErr
     });
     *cached = Some((std::time::Instant::now(), stats.clone()));
     Ok(Json(stats))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn credit(slot: i64, seconds: i32) -> CreditIn {
+        CreditIn {
+            project: "github.com/o/r".into(),
+            slot,
+            seconds,
+            prompts: 0,
+            sources: vec![],
+            models: vec![],
+        }
+    }
+
+    #[test]
+    fn rejects_time_that_cannot_have_happened() {
+        let slot = 1_000_000_200; // a multiple of 300
+        let now = slot + 100; // 100 seconds into the slot
+        assert!(validate(&credit(slot - 300, 300), now).is_ok());
+        // 100 seconds have passed; 5 more are allowed for clock drift
+        assert!(validate(&credit(slot, 105), now).is_ok());
+        assert!(validate(&credit(slot, 106), now).is_err());
+        assert!(validate(&credit(slot + 300, 1), now).is_err());
+        assert!(validate(&credit(slot - 1, 1), now).is_err());
+        assert!(validate(&credit(slot - 300, 0), now).is_err());
+        assert!(validate(&credit(slot - 300, 301), now).is_err());
+        assert!(validate(&credit(slot - BACKFILL_SECONDS - 300, 10), now).is_err());
+        let mut odd = credit(slot - 300, 10);
+        odd.project = "bad\nname".into();
+        assert!(validate(&odd, now).is_err());
+    }
 }
